@@ -46,11 +46,13 @@ typedef enum {
     PSLTriggerPipelineRising
 } PSLTriggerMode_t;
 
-#define MAX_PSL_TRIGGER_MODES 7
+#define MAX_PSL_TRIGGER_MODES 10
 
 static const char* PSLTriggerModeStrings[] = 
-    {"Software", "FreeRunning", "Hardware_Falling", "Hardware_Rising",
-    "Pipeline_Software", "Pipeline_Falling", "Pipeline_Rising"};
+    {"Software", "FreeRunning", "External", "Pipeline", 
+     "Hardware_Falling", "Hardware_Rising",
+     "Pipeline_Falling", "Pipeline_Rising",
+     "Integration_Low", "Integration_High"};
 
 /** Trigger mode choices */
 typedef enum {
@@ -64,7 +66,7 @@ typedef enum {
 
 #define MAX_PSL_FILE_FORMATS 6
 
-#define PSL_dummyString "PSL_DUMMY"
+#define PSLTIFFCommentString "PSL_TIFF_COMMENT"
 
 static const char* PSLFileFormatStrings[] = 
     {"tif", "jpg", "bmp", "gif", "png", "flf"};
@@ -90,9 +92,9 @@ public:
     epicsEventId stopEventId;   /**< This should be private but is accessed from C, must be public */
 
 protected:
-    int PSL_dummy;
-    #define FIRST_PSL_PARAM PSL_dummy
-    #define LAST_PSL_PARAM  PSL_dummy
+    int PSLTIFFComment;
+    #define FIRST_PSL_PARAM PSLTIFFComment
+    #define LAST_PSL_PARAM  PSLTIFFComment
 
 private:                                        
     /* These are the methods that are new to this class */
@@ -106,7 +108,6 @@ private:
     epicsTimerId timerId;
     char toServer[MAX_MESSAGE_SIZE];
     char fromServer[MAX_MESSAGE_SIZE];
-    NDArray *pData;
     asynUser *pasynUserServer;
     asynUser *pasynUserCommon;
 };
@@ -148,7 +149,7 @@ asynStatus PSL::writeReadServer(const char *output, char *input, size_t maxChars
 
 asynStatus PSL::getConfig()
 {
-    int sizeX, sizeY, binX, binY, imageSize;
+    int sizeX, sizeY, binX, binY, reverseX, reverseY, imageSize;
     int top, left, right, bottom;
     int i;
     char filePath[MAX_FILENAME_LEN];
@@ -163,7 +164,7 @@ asynStatus PSL::getConfig()
     
     status = writeReadServer("GetSizeMax", this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
     if (status == asynSuccess) {
-        sscanf(this->fromServer, "%d;%d", &sizeX, &sizeY);
+        sscanf(this->fromServer, "(%d,%d)", &sizeX, &sizeY);
         setIntegerParam(ADMaxSizeX, sizeX);
         setIntegerParam(ADMaxSizeY, sizeY);
     }
@@ -171,8 +172,8 @@ asynStatus PSL::getConfig()
     status = writeReadServer("GetSize", this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
     if (status == asynSuccess) {
         sscanf(this->fromServer, "(%d,%d)", &sizeX, &sizeY);
-        setIntegerParam(ADSizeX, sizeX);
-        setIntegerParam(ADSizeY, sizeY);
+        setIntegerParam(NDArraySizeX, sizeX);
+        setIntegerParam(NDArraySizeY, sizeY);
     }
 
     status = writeReadServer("GetName", this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
@@ -185,16 +186,30 @@ asynStatus PSL::getConfig()
     status = writeReadServer("GetMode", this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
     if (status == asynSuccess) {
         setIntegerParam(NDColorMode, NDColorModeMono);
-        if (strcmp(this->fromServer, "L"))         setIntegerParam(NDDataType, NDUInt8);
-        else if (strcmp(this->fromServer, "I;16")) setIntegerParam(NDDataType, NDUInt16);
-        else if (strcmp(this->fromServer, "I"))    setIntegerParam(NDDataType, NDUInt32);
-        else if (strcmp(this->fromServer, "F"))    setIntegerParam(NDDataType, NDFloat32);
-        else if (strcmp(this->fromServer, "RGB")) {
+        if (strcmp(this->fromServer, "L") == 0)         setIntegerParam(NDDataType, NDUInt8);
+        else if (strcmp(this->fromServer, "I;16") == 0) setIntegerParam(NDDataType, NDUInt16);
+        else if (strcmp(this->fromServer, "I") == 0)    setIntegerParam(NDDataType, NDUInt32);
+        else if (strcmp(this->fromServer, "F") == 0)    setIntegerParam(NDDataType, NDFloat32);
+        else if (strcmp(this->fromServer, "RGB") == 0) {
                                                    setIntegerParam(NDDataType, NDUInt8);
                                                    setIntegerParam(NDColorMode, NDColorModeMono);
         }
         else asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
                        "%s:%s: unknown mode=%s\n",
+                       driverName, functionName, this->fromServer);
+    }
+
+    status = writeReadServer("GetTriggerMode", this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
+    if (status == asynSuccess) {
+        for (i=0; i<MAX_PSL_TRIGGER_MODES; i++) {
+            if (strcmp(this->fromServer, PSLTriggerModeStrings[i]) == 0) {
+                setIntegerParam(ADTriggerMode, i);
+                break;
+            }
+        }
+        if (i == MAX_PSL_TRIGGER_MODES)
+            asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
+                       "%s:%s: unknown trigger mode=%s\n",
                        driverName, functionName, this->fromServer);
     }
 
@@ -224,6 +239,18 @@ asynStatus PSL::getConfig()
         setIntegerParam(ADSizeY, sizeY);
         imageSize = sizeX * sizeY * sizeof(epicsInt16);
         setIntegerParam(NDArraySize, imageSize);
+    }
+
+    status = writeReadServer("GetFliplr", this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
+    if (status == asynSuccess) {
+        sscanf(this->fromServer, "%d", &reverseX);
+        setIntegerParam(ADReverseX, reverseX);
+    }
+
+    status = writeReadServer("GetFlipud", this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
+    if (status == asynSuccess) {
+        sscanf(this->fromServer, "%d", &reverseY);
+        setIntegerParam(ADReverseY, reverseY);
     }
 
     status = writeReadServer("GetFileDirectory", filePath, sizeof(filePath), PSL_SERVER_TIMEOUT);
@@ -258,6 +285,11 @@ asynStatus PSL::getConfig()
         }
     }
 
+    status = writeReadServer("GetTagTxt", this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
+    if (status == asynSuccess) {
+        setStringParam(PSLTIFFComment, this->fromServer);
+    }
+
     callParamCallbacks();
     return(asynSuccess);
 }
@@ -276,26 +308,75 @@ asynStatus PSL::getImage()
 {
     int dims[2];
     int imageCounter;
-    int dataLen;
+    size_t dataLen;
+    size_t nCopied;
+    int headerLen;
     int eomReason;
     size_t nRead;
+    size_t maxRead;
+    size_t nWrite;
     int compressionMode;
     NDDataType_t dataType;
-    NDArray *pImage;
+    NDArray *pImage=NULL;
     asynStatus status;
-    char buffer[1000];
+    char buffer[2048];
+    char *pOut=NULL;
+    char *pIn;
     const char *functionName = "getImage";
 
     getIntegerParam(NDDataType, (int*)&dataType);
-    status = writeReadServer("GetImage", this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
-    if (status) return(status);
-    sscanf(this->fromServer, "%d;%d;%d;%d", &dims[0], &dims[1], &dataLen, &compressionMode);
-    status = pasynOctetSyncIO->read(pasynUserServer, buffer, sizeof(buffer), PSL_SERVER_TIMEOUT,
-                                    &nRead, &eomReason);
-    asynPrintIO(pasynUserSelf, ASYN_TRACEIO_DRIVER, buffer, sizeof(buffer), "");
+    status = pasynCommonSyncIO->connectDevice(pasynUserCommon);
+    asynPrint(pasynUserSelf, ASYN_TRACE_FLOW, 
+        "%s:%s: beginning image readout\n",
+        driverName, functionName);
+    // First time we issue the GetImage command with writeRead.  Use 10 second timeout because
+    // this initial response can take a while
+    status = pasynOctetSyncIO->writeRead(pasynUserServer, "GetImage", strlen("GetImage"), 
+                                         buffer, sizeof(buffer), 10.0, 
+                                         &nWrite, &nRead, &eomReason);
+    if (status != asynSuccess) {
+        asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
+            "%s:%s: error in GetImage command, status=%d, nRead=%d\n",
+            driverName, functionName, status, nRead);
+        return status;
+    }
+    sscanf(buffer, "%d;%d;%d;%1d%n", &dims[0], &dims[1], &dataLen, &compressionMode, &headerLen);
+    asynPrint(pasynUserSelf, ASYN_TRACEIO_DRIVER,
+        "%s:%s: sizeX=%d, sizeY=%d, dataLen=%d, headerLen=%d\n",
+        driverName, functionName, dims[0], dims[1], dataLen, headerLen);
+    setIntegerParam(NDArraySizeX, dims[0]);
+    setIntegerParam(NDArraySizeY, dims[1]);
+    if ((dims[0] <= 0) || (dims[1] <= 0)) return asynError;
+    for (nCopied=0; nCopied<dataLen; nCopied+=nRead) {
+        if (nCopied == 0) {
+            // The initial read returned both the header and the first part of the image
+            nRead -= headerLen;
+            pImage = this->pNDArrayPool->alloc(2, dims, dataType, 0, NULL);
+            pIn = &buffer[headerLen];
+            pOut = (char *)pImage->pData;
+        }
+        // Not first time we do a read    
+        else {
+            maxRead = sizeof(buffer);
+            if (maxRead > (dataLen - nCopied)) maxRead = dataLen - nCopied;
+            status = pasynOctetSyncIO->read(pasynUserServer, buffer, maxRead, 0,
+                                            &nRead, &eomReason);
+            if (status != asynSuccess) {
+                asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
+                    "%s:%s: error reading image, status=%d, dataLen=%d, nCopied=%d, maxRead=%d, nRead=%d\n",
+                    driverName, functionName, status, dataLen, nCopied, maxRead, nRead);
+                break;
+            }
+            pIn = buffer;
+        }
+        memcpy(pOut, pIn, nRead);
+        pOut+= nRead;
+    }
+    asynPrint(pasynUserSelf, ASYN_TRACE_FLOW, 
+        "%s:%s: end of image readout\n",
+        driverName, functionName);
 
     getIntegerParam(NDArrayCounter, &imageCounter);
-    pImage = this->pNDArrayPool->alloc(2, dims, dataType, 0, NULL);
 
     /* Put the frame number and time stamp into the buffer */
     pImage->uniqueId = imageCounter;
@@ -463,6 +544,18 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
                       minX, minY, minX+sizeX-1, minY+sizeY-1);
         status = writeReadServer(this->toServer, this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
         getConfig();
+    } else if (function == ADReverseX) {
+        epicsSnprintf(this->toServer, sizeof(this->toServer), "SetFliplr;%d", value);
+        writeReadServer(this->toServer, this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
+        getConfig();
+    } else if (function == ADReverseY) {
+        epicsSnprintf(this->toServer, sizeof(this->toServer), "SetFlipud;%d", value);
+        writeReadServer(this->toServer, this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
+        getConfig();
+    } else if (function == ADTriggerMode) {
+        epicsSnprintf(this->toServer, sizeof(this->toServer), "SetTriggerMode;%s", PSLTriggerModeStrings[value]);
+        writeReadServer(this->toServer, this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
+        getConfig();
     } else if (function == NDAutoSave) {
         epicsSnprintf(this->toServer, sizeof(this->toServer), "SetAutoSave;%d", value);
         status = writeReadServer(this->toServer, this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
@@ -475,6 +568,7 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
     } else if (function == NDFileNumber) {
         epicsSnprintf(this->toServer, sizeof(this->toServer), "SetFileNumber;%d", value);
         status = writeReadServer(this->toServer, this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
+        getConfig();
     } else {
         /* If this parameter belongs to a base class call its method */
         if (function < FIRST_PSL_PARAM) status = ADDriver::writeInt32(pasynUser, value);
@@ -508,7 +602,12 @@ asynStatus PSL::writeFloat64(asynUser *pasynUser, epicsFloat64 value)
     status = setDoubleParam(function, value);
 
     if (function == ADAcquireTime) {
-        epicsSnprintf(this->toServer, sizeof(this->toServer), "SetExposure;(%d,Microsec)", (int)(value*1e6));
+        if (value < 0.01) {
+            epicsSnprintf(this->toServer, sizeof(this->toServer), "SetExposure;(%d,Microsec)", (int)(value*1e6 + 0.5));
+        }
+        else {
+            epicsSnprintf(this->toServer, sizeof(this->toServer), "SetExpoMS;%d", (int)(value*1e3 + 0.5));
+        }
         status = writeReadServer(this->toServer, this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
         getConfig();
     } else {
@@ -550,8 +649,12 @@ asynStatus PSL::writeOctet(asynUser *pasynUser, const char *value,
     if (function == NDFilePath) {
         epicsSnprintf(this->toServer, sizeof(this->toServer), "SetFileDirectory;%s", value);
         status = writeReadServer(this->toServer, this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
+        checkPath();
     } else if (function == NDFileName) {
         epicsSnprintf(this->toServer, sizeof(this->toServer), "SetFileName;%s", value);
+        status = writeReadServer(this->toServer, this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
+    } else if (function == PSLTIFFComment) {
+        epicsSnprintf(this->toServer, sizeof(this->toServer), "SetTagTxt;%s", value);
         status = writeReadServer(this->toServer, this->fromServer, sizeof(this->fromServer), PSL_SERVER_TIMEOUT);
     } else {
         /* If this parameter belongs to a base class call its method */
@@ -622,9 +725,7 @@ PSL::PSL(const char *portName, const char *serverPort,
     : ADDriver(portName, 1, NUM_PSL_PARAMS, maxBuffers, maxMemory,
                0, 0,             /* No interfaces beyond those set in ADDriver.cpp */
                ASYN_CANBLOCK, 1, /* ASYN_CANBLOCK=1, ASYN_MULTIDEVICE=0, autoConnect=1 */
-               priority, stackSize),
-      pData(NULL)
-
+               priority, stackSize)
 {
     int status = asynSuccess;
     const char *functionName = "PSL";
@@ -643,7 +744,7 @@ PSL::PSL(const char *portName, const char *serverPort,
         return;
     }
 
-    createParam(PSL_dummyString, asynParamInt32, &PSL_dummy);
+    status = createParam(PSLTIFFCommentString, asynParamOctet, &PSLTIFFComment);  
     
     /* Connect to server */
     status = pasynOctetSyncIO->connect(serverPort, 0, &this->pasynUserServer, NULL);
