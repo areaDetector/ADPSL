@@ -113,7 +113,7 @@ private:
 };
 
 
-#define NUM_PSL_PARAMS (&LAST_PSL_PARAM - &FIRST_PSL_PARAM + 1)
+#define NUM_PSL_PARAMS ((int)(&LAST_PSL_PARAM - &FIRST_PSL_PARAM + 1))
 
 asynStatus PSL::writeReadServer(const char *output, char *input, size_t maxChars, double timeout)
 {
@@ -296,17 +296,17 @@ asynStatus PSL::getConfig()
 
 void PSL::acquireFrame()
 {
-    asynStatus status;
     double acquireTime, timeout;
 
     getDoubleParam(ADAcquireTime, &acquireTime);
     timeout = acquireTime + 10.;
-    status = writeReadServer("Snap", this->fromServer, sizeof(this->fromServer), timeout);
+    writeReadServer("Snap", this->fromServer, sizeof(this->fromServer), timeout);
 }
 
 asynStatus PSL::getImage()
 {
-    int dims[2];
+    size_t dims[2];
+    int itemp1, itemp2, itemp3;
     int imageCounter;
     size_t dataLen;
     size_t nCopied;
@@ -340,12 +340,15 @@ asynStatus PSL::getImage()
             driverName, functionName, status, nRead);
         return status;
     }
-    sscanf(buffer, "%d;%d;%d;%1d%n", &dims[0], &dims[1], &dataLen, &compressionMode, &headerLen);
+    sscanf(buffer, "%d;%d;%d;%1d%n", &itemp1, &itemp2, &itemp3,&compressionMode, &headerLen);
+    dims[0] = itemp1;
+    dims[1] = itemp2;
+    dataLen = itemp3;
     asynPrint(pasynUserSelf, ASYN_TRACEIO_DRIVER,
         "%s:%s: sizeX=%d, sizeY=%d, dataLen=%d, headerLen=%d\n",
         driverName, functionName, dims[0], dims[1], dataLen, headerLen);
-    setIntegerParam(NDArraySizeX, dims[0]);
-    setIntegerParam(NDArraySizeY, dims[1]);
+    setIntegerParam(NDArraySizeX, (int)dims[0]);
+    setIntegerParam(NDArraySizeY, (int)dims[1]);
     if ((dims[0] <= 0) || (dims[1] <= 0)) return asynError;
     for (nCopied=0; nCopied<dataLen; nCopied+=nRead) {
         if (nCopied == 0) {
@@ -410,7 +413,6 @@ static void PSLTaskC(void *drvPvt)
  * does the callbacks to send it to higher layers */
 void PSL::PSLTask()
 {
-    int status = asynSuccess;
     int imageCounter;
     int numImages, numImagesCounter;
     int imageMode;
@@ -418,7 +420,7 @@ void PSL::PSLTask()
     double acquirePeriod;
     int autoSave;
     int arrayCallbacks;
-    int shutterMode, useShutter;
+    int shutterMode;
     double elapsedTime, delayTime;
     epicsTimeStamp acqStartTime, acqEndTime;
     const char *functionName = "PSLTask";
@@ -438,7 +440,7 @@ void PSL::PSLTask()
             this->unlock();
             asynPrint(this->pasynUserSelf, ASYN_TRACE_FLOW, 
                 "%s:%s: waiting for acquire to start\n", driverName, functionName);
-            status = epicsEventWait(this->startEventId);
+            epicsEventWait(this->startEventId);
             this->lock();
             getIntegerParam(ADAcquire, &acquire);
             setIntegerParam(ADNumImagesCounter, 0);
@@ -449,7 +451,6 @@ void PSL::PSLTask()
         getIntegerParam(NDAutoSave, &autoSave);
         getIntegerParam(ADShutterMode, &shutterMode);
         getIntegerParam(NDArrayCallbacks, &arrayCallbacks);
-        if (shutterMode == ADShutterModeNone) useShutter=0; else useShutter=1;
         
         epicsTimeGetCurrent(&acqStartTime);
         acquireFrame();
@@ -486,7 +487,7 @@ void PSL::PSLTask()
                 setIntegerParam(ADStatus, ADStatusWaiting);
                 callParamCallbacks();
                 this->unlock();
-                status = epicsEventWaitWithTimeout(this->stopEventId, delayTime);
+                epicsEventWaitWithTimeout(this->stopEventId, delayTime);
                 this->lock();
             }
         }
