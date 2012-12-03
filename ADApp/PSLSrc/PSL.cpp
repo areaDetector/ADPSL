@@ -317,6 +317,7 @@ asynStatus PSL::getImage()
     size_t nWrite;
     int compressionMode;
     NDDataType_t dataType;
+    int itemp;
     NDArray *pImage=NULL;
     asynStatus status;
     char buffer[2048];
@@ -324,7 +325,7 @@ asynStatus PSL::getImage()
     char *pIn;
     const char *functionName = "getImage";
 
-    getIntegerParam(NDDataType, (int*)&dataType);
+    getIntegerParam(NDDataType, &itemp); dataType = (NDDataType_t)itemp;
     status = pasynCommonSyncIO->connectDevice(pasynUserCommon);
     asynPrint(pasynUserSelf, ASYN_TRACE_FLOW, 
         "%s:%s: beginning image readout\n",
