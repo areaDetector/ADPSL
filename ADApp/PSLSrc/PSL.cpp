@@ -337,8 +337,8 @@ asynStatus PSL::getImage()
                                          &nWrite, &nRead, &eomReason);
     if (status != asynSuccess) {
         asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
-            "%s:%s: error in GetImage command, status=%d, nRead=%d\n",
-            driverName, functionName, status, nRead);
+            "%s:%s: error in GetImage command, status=%d, nRead=%lu\n",
+            driverName, functionName, status, (unsigned long)nRead);
         return status;
     }
     sscanf(buffer, "%d;%d;%d;%1d%n", &itemp1, &itemp2, &itemp3,&compressionMode, &headerLen);
@@ -346,8 +346,9 @@ asynStatus PSL::getImage()
     dims[1] = itemp2;
     dataLen = itemp3;
     asynPrint(pasynUserSelf, ASYN_TRACEIO_DRIVER,
-        "%s:%s: sizeX=%d, sizeY=%d, dataLen=%d, headerLen=%d\n",
-        driverName, functionName, dims[0], dims[1], dataLen, headerLen);
+        "%s:%s: sizeX=%lu, sizeY=%lu, dataLen=%lu, headerLen=%d\n",
+        driverName, functionName, (unsigned long)dims[0], (unsigned long)dims[1], 
+        (unsigned long)dataLen, headerLen);
     setIntegerParam(NDArraySizeX, (int)dims[0]);
     setIntegerParam(NDArraySizeY, (int)dims[1]);
     if ((dims[0] <= 0) || (dims[1] <= 0)) return asynError;
@@ -367,8 +368,9 @@ asynStatus PSL::getImage()
                                             &nRead, &eomReason);
             if (status != asynSuccess) {
                 asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
-                    "%s:%s: error reading image, status=%d, dataLen=%d, nCopied=%d, maxRead=%d, nRead=%d\n",
-                    driverName, functionName, status, dataLen, nCopied, maxRead, nRead);
+                    "%s:%s: error reading image, status=%d, dataLen=%lu, nCopied=%lu, maxRead=%lu, nRead=%lu\n",
+                    driverName, functionName, status, (unsigned long)dataLen, (unsigned long)nCopied, 
+                    (unsigned long)maxRead, (unsigned long)nRead);
                 break;
             }
             pIn = buffer;
