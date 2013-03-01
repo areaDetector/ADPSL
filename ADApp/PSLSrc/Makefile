@@ -29,6 +29,7 @@ PROD_SRCS_vxWorks += PSLApp_registerRecordDeviceDriver.cpp
 PROD_LIBS += PSL
 
 include $(AREA_DETECTOR)/ADApp/commonDriverMakefile
+$(PROD_NAME)_DBD += drvAsynIPPort.dbd
 
 #=============================
 
