@@ -324,6 +324,7 @@ asynStatus PSL::getImage()
     char buffer[2048];
     char *pOut=NULL;
     char *pIn;
+    epicsTimeStamp currentTime;
     const char *functionName = "getImage";
 
     getIntegerParam(NDDataType, &itemp); dataType = (NDDataType_t)itemp;
@@ -387,8 +388,10 @@ asynStatus PSL::getImage()
 
     /* Put the frame number and time stamp into the buffer */
     pImage->uniqueId = imageCounter;
+    epicsTimeGetCurrent(&currentTime);
+    pImage->timeStamp = currentTime.secPastEpoch + currentTime.nsec / 1.e9;
+    updateTimeStamp(&pImage->epicsTS);    /* Get any attributes that have been defined for this driver */        
 
-    /* Get any attributes that have been defined for this driver */        
     this->getAttributes(pImage->pAttributeList);
 
     /* Call the NDArray callback */
