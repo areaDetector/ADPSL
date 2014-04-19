@@ -24,6 +24,10 @@ files respectively, in the configure/ directory of the appropriate release of th
 Release Notes
 =============
 
+R2-1
+----
+* Finished the PSLDoc.html documentation, converting from marCCD document.
+
 R2-0
 ----
 * Moved the repository to [Github](https://github.com/areaDetector/ADPSL).
