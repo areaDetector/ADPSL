@@ -4,7 +4,7 @@ errlogInit(20000)
 dbLoadDatabase("$(TOP)/dbd/PSLApp.dbd")
 PSLApp_registerRecordDeviceDriver(pdbbase) 
 
-epicsEnvSet("PREFIX", "PSL1:")
+epicsEnvSet("PREFIX", "13PSL1:")
 epicsEnvSet("PORT",   "PSL")
 epicsEnvSet("QSIZE",  "20")
 epicsEnvSet("XSIZE",  "4007")
@@ -13,20 +13,13 @@ epicsEnvSet("NCHANS", "2048")
 
 ###
 # Create the asyn port to talk to the PSL server on port 50000
-# Set noAutoConnect and noProcessEos
-drvAsynIPPortConfigure("PSLServer","10.0.4.190:50000", 0, 0, 0)
+drvAsynIPPortConfigure("PSLServer","rivers-mobile2:50000", 0, 0, 0)
 asynOctetSetOutputEos("PSLServer", 0, "\n")
 
 asynSetTraceIOMask("PSLServer",0,2)
 #asynSetTraceMask("PSLServer",0,9)
 #asynSetTraceFile("PSLServer", 0, "PSLServer.out")
 
-
-# Need to open connection to camera - edit the camera name as needed
-# Note: subsequent running of the IOC will get an error that the camera is already open,
-# but that is OK
-asynOctetConnect PSLServer PSLServer 0 10
-asynOctetWriteRead PSLServer "Open;VHR11"
 
 # PSLConfig(const char *portName, const char *serverPort, 
 #          int maxBuffers, size_t maxMemory,
