@@ -38,8 +38,7 @@ using namespace std;
 #define MAX_MESSAGE_SIZE 256
 #define MAX_FILENAME_LEN 256
 #define PSL_SERVER_TIMEOUT 2.0
-#define READ_BUFFER_SIZE (4096)
-#define MAX_OPTION_LEN 1024
+#define READ_BUFFER_SIZE 4096
 #define MAX_CHOICES 64
 
 
@@ -294,11 +293,6 @@ asynStatus PSL::writeReadServer(const char *output, char *input, size_t maxChars
     setStringParam(ADStringToServer, output);
     callParamCallbacks();
 
-    //Do we need to delay?
-    //status = pasynCommonSyncIO->disconnectDevice(pasynUserCommon_);
-    //epicsThreadSleep(0.1);
-
-    
     return(status);
 }
 
@@ -583,7 +577,6 @@ asynStatus PSL::getImage()
             driverName, functionName, status);
         return status;
     }
-    // This code is really ugly because the server returns a header with no terminator followed by binary data
     nDims = 2;
     colorMode = NDColorModeMono;
     if (strncmp(readBuffer_, "L;", 2) == 0) {
@@ -611,7 +604,7 @@ asynStatus PSL::getImage()
         dims[1] = itemp1;
         dims[2] = itemp2;
     }
-    headerLen = prefixLen +sizeLen;
+    headerLen = prefixLen + sizeLen;
     asynPrint(pasynUserSelf, ASYN_TRACEIO_DRIVER,
         "%s:%s: headerLen=%d, dims=[%d,%d,%d], dataLen=%d\n",
         driverName, functionName, headerLen, 
@@ -681,14 +674,14 @@ void PSL::PSLTask()
     int numImages, numImagesCounter;
     int imageMode;
     int acquire;
-    double acquirePeriod, acquireTime;
+    epicsEventWaitStatus waitStatus;
+    double acquirePeriod;
     int autoSave;
     int arrayCallbacks;
     int shutterMode;
     double elapsedTime, delayTime;
-    epicsTimeStamp acqStartTime, acqEndTime, currentTime;
+    epicsTimeStamp acqStartTime, acqEndTime;
     const char *functionName = "PSLTask";
-    const double getImagePeriod = 0.5;
 
     this->lock();
 
@@ -731,11 +724,14 @@ void PSL::PSLTask()
 
         /* If arrayCallbacks is set then read the data, do callbacks */
         if (arrayCallbacks) {
-            getDoubleParam(ADAcquireTime, &acquireTime);
-            epicsTimeGetCurrent(&currentTime);
-            elapsedTime = epicsTimeDiffInSeconds(&currentTime, &acqStartTime);
-            //epicsEventWaitWithTimeout(stopEventId_, acquireTime - elapsedTime);
-            epicsThreadSleep(acquireTime - getImagePeriod - elapsedTime);
+            while (1) {
+                writeReadServer("HasNewData", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+                if (strcmp(fromServer_, "True") == 0) break;
+                unlock();
+                waitStatus = epicsEventWaitWithTimeout(stopEventId_, 0.1);
+                lock();
+                if (waitStatus == epicsEventWaitOK) break;
+            }
             getImage();
         }
 
