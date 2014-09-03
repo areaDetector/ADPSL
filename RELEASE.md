@@ -26,6 +26,18 @@ Release Notes
 
 R2-1
 ----
+* Many improvements to the driver.  The initial work was done by Adam Bark from Diamond.
+  - Worked with Perceval Guillou at Photonic Science to improve the protocol with the server so it is more
+    consistent and easier to parse.  Version 4c3 or later of their server is required to work with
+    this release of the EPICS driver. 
+    Photonic Science says that all of their cameras will work with the new server.  
+    New DLLs will be needed in some cases.
+  - Added a CameraName record to select the camera to control.
+  - Implemented the asynEnum interface so that mbbo/mbbi records (CameraName, TriggerMode, FileFormat)
+    get their choices from a list provided by the server.  This guarantees that the choices will be valid
+    for a specific installation and the selected camera.
+  - Added support for color cameras.
+  - Improved the report() function.
 * Finished the PSLDoc.html documentation, converting from marCCD document.
 
 R2-0
