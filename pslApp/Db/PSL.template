@@ -8,16 +8,16 @@
 
 # These are new records for the PSL detector
 
-record(stringout, "$(P)$(R)CameraName")
+record(mbbo, "$(P)$(R)CameraName")
 {
     field(PINI, "YES")
-    field(DTYP, "asynOctetWrite")
+    field(DTYP, "asynInt32")
     field(OUT,  "@asyn($(PORT),$(ADDR),$(TIMEOUT))PSL_CAMERA_NAME")
 }
 
-record(stringin, "$(P)$(R)CameraName_RBV")
+record(mbbi, "$(P)$(R)CameraName_RBV")
 {
-    field(DTYP, "asynOctetRead")
+    field(DTYP, "asynInt32")
     field(INP,  "@asyn($(PORT),$(ADDR),$(TIMEOUT))PSL_CAMERA_NAME")
     field(SCAN, "I/O Intr")
 }
