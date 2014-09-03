@@ -23,12 +23,12 @@
 #include <epicsMutex.h>
 #include <cantProceed.h>
 #include <iocsh.h>
-#include <epicsExport.h>
 
 #include <asynOctetSyncIO.h>
 #include <asynCommonSyncIO.h>
 
 #include "ADDriver.h"
+#include <epicsExport.h>
 
 #include <string>
 #include <set>
@@ -624,7 +624,7 @@ asynStatus PSL::getImage()
     pIn = readBuffer_ + headerLen;
     pOut = (char *)pImage->pData;
     nRead -= headerLen;
-    for (nCopied=0; nCopied<dataLen; nCopied+=nRead) {
+    for (nCopied=0; nCopied<dataLen; nCopied+=(int)nRead) {
         if (nCopied > 0) {
             maxRead = sizeof(readBuffer_);
             if (maxRead > (dataLen - nCopied)) maxRead = dataLen - nCopied;
