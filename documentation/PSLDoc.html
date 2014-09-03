@@ -10,7 +10,7 @@
     <h1>
       areaDetector PSL driver</h1>
     <h2>
-      April 18, 2014</h2>
+      September 3, 2014</h2>
     <h2>
       Mark Rivers</h2>
     <h2>
@@ -36,10 +36,16 @@
         Photonic Science Limited</a> (PSL).
   </p>
   <p>
-    The interface to the detector is via a TCP/IP socket interface to the <b>PSL_server</b>
-    server that PSL provides. The PSL_server program must be started before the areaDetector
-    software is started.
-  </p>
+    The interface to the detector is via a TCP/IP socket interface to the <b>PSLViewer</b>
+    program that PSL provides. Before starting the areaDetector software the following
+    needs to be done:</p>
+  <ul>
+    <li>Run the PSLViewer program</li>
+    <li>Open the Tools/Server control window</li>
+    <li>Select a PORT. The default is 50000. This port must be used in the drvAsynIPPortConfigure
+      command in the areaDetector startup script.</li>
+    <li>Press the Start server button.</li>
+  </ul>
   <p>
     This driver inherits from <a href="areaDetectorDoc.html#ADDriver">ADDriver</a>.
     It implements many of the parameters in <a href="areaDetectorDoxygenHTML/asyn_n_d_array_driver_8h.html">
@@ -58,72 +64,65 @@
       <tr>
         <td align="center" colspan="3">
           <b>Implementation of Parameters in asynNDArrayDriver.h and ADDriver.h, and EPICS Record
-            Definitions in ADBase.template and NDFile.template</b>
-        </td>
+            Definitions in ADBase.template and NDFile.template</b> </td>
       </tr>
       <tr>
         <th>
-          Parameter index variable
-        </th>
+          Parameter index variable </th>
         <th>
-          EPICS record name
-        </th>
+          EPICS record name </th>
         <th>
-          Description
-        </th>
+          Description </th>
       </tr>
       <tr>
         <td>
-          NDFilePath
-        </td>
+          NDFilePath </td>
         <td>
-          $(P)$(R)FilePath
-        </td>
+          $(P)$(R)FilePath </td>
         <td>
-          Controls the path for saving images. It must be a valid path for PSL_server.
-        </td>
+          Controls the path for saving images. It must be a valid path for PSL_server. </td>
       </tr>
       <tr>
         <td>
-          NDFileFormat
-        </td>
+          NDFileFormat </td>
         <td>
-          $(P)$(R)FileFormat
-        </td>
+          $(P)$(R)FileFormat </td>
         <td>
           The PSL driver supports saving images using the PSL_server in the following formats:
           <ul>
-            <li>TIFF</li>
-            <li>JPEG</li>
+            <li>AVI</li>
             <li>BMP</li>
-            <li>GIF</li>
-            <li>PNF</li>
             <li>FLF</li>
+            <li>GIF</li>
+            <li>JPEG</li>
+            <li>PCX</li>
+            <li>PNG</li>
+            <li>PNM</li>
+            <li>TIFF</li>
           </ul>
+          <p>
+            This list of file formats is read from the server, so could change in future releases
+            of the server with no change to the areaDetector software required.</p>
         </td>
       </tr>
       <tr>
         <td>
-          ADTriggerMode
-        </td>
+          ADTriggerMode </td>
         <td>
-          $(P)$(R)TriggerMode
-        </td>
+          $(P)$(R)TriggerMode </td>
         <td>
-          The PSL driver supports the following trigger modes:
+          The PSL driver supports one or more of the following trigger modes:
           <ul>
-            <li>Software</li>
             <li>FreeRunning</li>
-            <li>External</li>
-            <li>Pipeline</li>
             <li>Hardware_Falling</li>
             <li>Hardware_Rising</li>
             <li>Pipeline_Falling</li>
             <li>Pipeline_Rising</li>
-            <li>Integration_Low</li>
-            <li>Integration_High</li>
+            <li>Pipeline_Software</li>
+            <li>Software</li>
           </ul>
-        </td>
+          The menu of valid trigger modes is read from the server when a camera is opened,
+          because it is camera-specific. </td>
       </tr>
     </tbody>
   </table>
@@ -142,53 +141,60 @@
       </tr>
       <tr>
         <th>
-          Parameter index variable
-        </th>
+          Parameter index variable </th>
         <th>
-          asyn interface
-        </th>
+          asyn interface </th>
         <th>
-          Access
-        </th>
+          Access </th>
         <th>
-          Description
-        </th>
+          Description </th>
         <th>
-          drvInfo string
-        </th>
+          drvInfo string </th>
         <th>
-          EPICS record name
-        </th>
+          EPICS record name </th>
         <th>
-          EPICS record type
-        </th>
+          EPICS record type </th>
       </tr>
       <tr>
         <td>
-          PSLTIFFComment
-        </td>
+          PSLCameraName </td>
         <td>
-          asynOctet
-        </td>
+          asynInt32 </td>
         <td>
-          r/w
-        </td>
+          r/w </td>
         <td>
-          Comment string to put in header of TIFF files written by PSL_server.
-        </td>
+          Selects the camera to open. </td>
         <td>
-          PSL_TIFF_COMMENT
-        </td>
+          PSL_CAMERA_NAME </td>
+        <td>
+          $(P)$(R)CameraName
+          <br />
+          $(P)$(R)CameraName_RBV The menu of valid camera names is read from the server when
+          the areaDetector software starts.</td>
+        <td>
+          mbbo
+          <br />
+          mbbi </td>
+      </tr>
+      <tr>
+        <td>
+          PSLTIFFComment </td>
+        <td>
+          asynOctet </td>
+        <td>
+          r/w </td>
+        <td>
+          Comment string to put in header of TIFF files written by PSL_server. </td>
+        <td>
+          PSL_TIFF_COMMENT </td>
         <td>
           $(P)$(R)TIFFComment
           <br />
-          $(P)$(R)TIFFCommand_RBV
-        </td>
+          $(P)$(R)TIFFCommand_RBV </td>
         <td>
           waveform
           <br />
-          waveform
-        </td>
+          waveform </td>
       </tr>
     </tbody>
   </table>
@@ -240,9 +246,10 @@
   <p>
     The following are some current restrictions of the PSL driver:</p>
   <ul>
-    <li>PSL has changed the PSL_server protocol during the time that the areaDetector
-      driver has been used. This makes it difficult to keep the driver up to date with
-      their server. Hopefully the server protocol is now stable. </li>
+    <li>PSL has changed the PSLViewer protocol during the time that the areaDetector driver
+      has been used. Starting with R2-1 I have worked with Perceval Guillou at Photonic
+      Science to stabilize the protocol. PSLViewer 4c3 or later must be used with ADPSL
+      R2-1 or later.</li>
   </ul>
 </body>
 </html>
