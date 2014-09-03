@@ -78,12 +78,14 @@ protected:
 private:                                        
     /* These are the methods that are new to this class */
     asynStatus writeReadServer(const char *output, char *input, size_t maxChars, double timeout);
+    asynStatus openCamera(int cameraId);
     asynStatus getConfig();
     void acquireFrame();
     asynStatus getImage();
     asynStatus getVersion();
     void getChoices(const char*command, std::set<std::string> *pChoices);
-    std::string getChoiceFromIndex(std::set<std::string> choices, int index);
+    const char *getChoiceFromIndex(std::set<std::string> choices, int index);
+    asynStatus doEnumCallbacks();
    
     /* Our data */
     epicsEventId startEventId_;
@@ -153,7 +155,7 @@ PSL::PSL(const char *portName, const char *serverPort,
         return;
     }
 
-    status = createParam(PSLCameraNameString,  asynParamOctet, &PSLCameraName_);  
+    status = createParam(PSLCameraNameString,  asynParamInt32, &PSLCameraName_);  
     status = createParam(PSLTIFFCommentString, asynParamOctet, &PSLTIFFComment_);  
     
     /* Connect to server */
@@ -166,10 +168,10 @@ PSL::PSL(const char *portName, const char *serverPort,
             driverName, functionName);
         return;
     }
-    getChoices("GetOptions",                  &validOptions_);
-    getChoices("GetCamList",                  &cameraNameChoices_);
-    getChoices("GetOptionRange;RecordFormat", &recordFormatChoices_);
-    getChoices("GetOptionRange;TriggerMode",  &triggerModeChoices_);
+    getChoices("GetCamList", &cameraNameChoices_);
+    
+    // Open first camera in list to start with
+    openCamera(0);
 
     /* Compute the sensor size by reading the image size and the binning */
     status = getConfig();
@@ -204,6 +206,26 @@ PSL::PSL(const char *portName, const char *serverPort,
     }
 }
 
+asynStatus PSL::openCamera(int cameraId)
+{
+    asynStatus status;
+    const char *cameraName = getChoiceFromIndex(cameraNameChoices_, cameraId);
+    
+    status = writeReadServer("Close", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    epicsSnprintf(toServer_, sizeof(toServer_), "Open;%s", cameraName);
+    status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    epicsSnprintf(toServer_, sizeof(toServer_), "Select;%s", cameraName);
+    status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    status = writeReadServer("GetCamNum", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    nCameras_ = atoi(fromServer_);
+    getChoices("GetOptions",                  &validOptions_);
+    getChoices("GetCamList",                  &cameraNameChoices_);
+    getChoices("GetOptionRange;RecordFormat", &recordFormatChoices_);
+    getChoices("GetOptionRange;TriggerMode",  &triggerModeChoices_);
+    doEnumCallbacks();
+    return status;
+}
+
 void PSL::getChoices(const char *command, std::set<std::string> *pChoices)
 {
     const size_t optionListLen = 4096;
@@ -219,10 +241,8 @@ void PSL::getChoices(const char *command, std::set<std::string> *pChoices)
         asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
                   "%s::%s error in write/read to server %d\n",
                   driverName, functionName, status);
-    while ((pBracket = strchr(++pBracket, (int)'[')) != NULL)
-        nCameras_++;
+    while ((pBracket = strchr(++pBracket, (int)'[')) != NULL);
     if (nCameras_ > 1) {
-        nCameras_ -= 1;
         optionPtr = strtok(optionList, "[]");
     } else {
         optionPtr = optionList;
@@ -235,20 +255,20 @@ void PSL::getChoices(const char *command, std::set<std::string> *pChoices)
         driverName, functionName);
         return;
     }
+    pChoices->clear();
     while (optionPtr != NULL) {
         pChoices->insert(std::string(optionPtr));
         optionPtr = strtok(NULL, "',[] ");
     }
 }
 
-std::string PSL::getChoiceFromIndex(std::set<std::string> choices, int index)
+const char* PSL::getChoiceFromIndex(std::set<std::string> choices, int index)
 {
     std::set<std::string>::iterator it;
     int i;
     
-    for (i=0, it=choices.begin(); i<index && it!=choices.end(); i++, it++) {
-    }
-    return *it;
+    for (i=0, it=choices.begin(); i<index && it!=choices.end(); i++, it++);
+    return (*it).c_str();
 }  
 
 asynStatus PSL::writeReadServer(const char *output, char *input, size_t maxChars, double timeout)
@@ -287,24 +307,23 @@ asynStatus PSL::getVersion()
     asynStatus status;
     char input[MAX_MESSAGE_SIZE];
     asynUser *pasynUser = pasynUserServer_;
+    const char *expectedResponse = "version PSLViewer-";
     const char *functionName = "getVersion";
-    status = writeReadServer("Hello", input, MAX_MESSAGE_SIZE,
+    status = writeReadServer("GetVersion", input, MAX_MESSAGE_SIZE,
                              PSL_SERVER_TIMEOUT);
     if (status) {
         asynPrint(pasynUser, ASYN_TRACE_ERROR,
-                  "%s:%s, ERROR, no response from Hello command, status=%d. Possibly old server version?\n",
+                  "%s:%s, ERROR, no response from GetVersion command, status=%d. Possibly old server version?\n",
                   driverName, functionName, status);
         return asynError;
     }
-    if (strncmp(input, "!!!Welcome on server PSLViewer-", 31) != 0) {
+    if (strstr(input, expectedResponse) == 0) {
         asynPrint(pasynUser, ASYN_TRACE_ERROR,
-                  "%s:%s, ERROR, unexpected response to Hello command = \"%s\". Possibly old server version?\n",
+                  "%s:%s, ERROR, unexpected response to GetVersion command = \"%s\". Possibly old server version?\n",
                   driverName, functionName, input);
         return asynError;
     }
-    strcpy(serverVersion_, strtok(&input[31], "-"));
-    asynPrint(pasynUser, ASYN_TRACE_ERROR, "%s:%s: serverVersion_=%s\n", 
-              driverName, functionName, serverVersion_);
+    strncpy(serverVersion_, input + strlen(expectedResponse), 3);
     if (serverVersion_[0] != '4') {
         asynPrint(pasynUser, ASYN_TRACE_ERROR,
                   "%s:%s, ERROR, serverVersion_[0]='%c', should be '4'.\n",
@@ -431,19 +450,19 @@ asynStatus PSL::getConfig()
         if (status == asynSuccess) {
             if (nCameras_ > 1) {
                 sscanf(fromServer_, "[(%d, %d, %d, %d)",
-                       &minX, &minY, &sizeX, &sizeY);
+                       &minX, &minY, &right, &bottom);
 // This should only depend on number of detectors
-//                left *= 2; top *= 2; right *= 2; bottom *= 2;
-//                sizeX = right-left+2;
-//                sizeY = bottom-top+2;
+                right *= 2; bottom *= 2;
+                sizeX = minX - right;
+                sizeY = minY - bottom;
             } else {
                 sscanf(fromServer_, "(%d,%d,%d,%d)",
                        &minX, &minY, &right, &bottom);
             }
             setIntegerParam(ADMinX, minX);
             setIntegerParam(ADMinY, minY);
-            sizeX = minX + right;
-            sizeY = minY + bottom;
+            sizeX = right - minX;
+            sizeY = bottom - minY;
             setIntegerParam(ADSizeX, sizeX);
             setIntegerParam(ADSizeY, sizeY);
             imageSize = sizeX * sizeY * sizeof(epicsInt16);
@@ -566,21 +585,19 @@ asynStatus PSL::getImage()
     }
     // This code is really ugly because the server returns a header with no terminator followed by binary data
     nDims = 2;
-    dims[2] = 1;
     colorMode = NDColorModeMono;
-    if (strstr(readBuffer_, "L;") != 0) {
+    if (strncmp(readBuffer_, "L;", 2) == 0) {
         prefixLen = 2;
         dataType = NDUInt8;
         nDims = 2;
-    } else if (strstr(readBuffer_, "I;16;") != 0) {
+    } else if (strncmp(readBuffer_, "I;16;", 5) == 0) {
         prefixLen = 5;
         dataType = NDUInt16;
         nDims = 2;
-    } else if (strstr(readBuffer_, "RGB;") != 0) {
+    } else if (strncmp(readBuffer_, "RGB;", 4) == 0) {
         prefixLen = 4;
         dataType = NDUInt8;
         nDims = 3;
-        dims[2] = 3;
         colorMode = NDColorModeRGB1;
     }
     setIntegerParam(NDDataType, dataType);
@@ -588,6 +605,7 @@ asynStatus PSL::getImage()
     if (nDims == 2) {
         dims[0] = itemp1;
         dims[1] = itemp2;
+        dims[2] = 1;
     } else {
         dims[0] = 3;
         dims[1] = itemp1;
@@ -814,7 +832,7 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
         getConfig();
     } else if (function == ADTriggerMode) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetTriggerMode;%s", 
-            getChoiceFromIndex(triggerModeChoices_, value).c_str());
+            getChoiceFromIndex(triggerModeChoices_, value));
         writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         getConfig();
     } else if (function == NDAutoSave) {
@@ -823,9 +841,11 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
         getConfig();
     } else if (function == NDFileFormat) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetRecordFormat;%s",
-                      getChoiceFromIndex(recordFormatChoices_, value).c_str());
+                      getChoiceFromIndex(recordFormatChoices_, value));
         status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         getConfig();
+    } else if (function == PSLCameraName_) {
+        status = openCamera(value);
     } else if (function == NDFileNumber) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetRecordNumber;%d", value);
         status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
@@ -969,6 +989,29 @@ asynStatus PSL::readEnum(asynUser *pasynUser, char *strings[], int values[], int
     return asynSuccess;   
 }
 
+asynStatus PSL::doEnumCallbacks()
+{
+    int function, i;
+    int functions[] = {NDFileFormat, ADTriggerMode, PSLCameraName_};
+    std::set<std::string> choices[] = {recordFormatChoices_, triggerModeChoices_, cameraNameChoices_};
+    std::set<std::string>::iterator it;
+    char *strings[MAX_CHOICES];
+    int values[MAX_CHOICES];
+    int severities[MAX_CHOICES];   
+    int numFunctions = sizeof(functions)/sizeof(functions[0]);
+
+    for (function=0; function<numFunctions; function++) {
+        for (i=0, it=choices[function].begin(); it!=choices[function].end() && i<MAX_CHOICES; i++, it++) {
+            strings[i] = epicsStrDup((*it).c_str());
+            values[i] = i;
+            severities[i] = 0;
+        }
+        doCallbacksEnum(strings, values, severities, i, functions[i], 0);
+    }
+    return asynSuccess;   
+}
+
+
 
 /** Report status of the driver.
   * Prints details about the driver if details>0.
@@ -980,14 +1023,16 @@ void PSL::report(FILE *fp, int details)
 {
     fprintf(fp, "PSL detector %s\n", this->portName);
     if (details > 0) {
-        int nx, ny;
         std::set<std::string>::iterator it;
         
-        getIntegerParam(ADSizeX, &nx);
-        getIntegerParam(ADSizeY, &ny);
-        fprintf(fp, "  NX, NY:            %d  %d\n", nx, ny);
+        fprintf(fp, "  Server version:    %s\n", serverVersion_);
+        fprintf(fp, "  Sub-cameras:       %d\n", nCameras_);
         fprintf(fp, "  Cameras (%d):\n", (int)cameraNameChoices_.size());
         for (it=cameraNameChoices_.begin(); it!= cameraNameChoices_.end(); it++) {
+            fprintf(fp, "    %s\n", (*it).c_str());
+        }
+        fprintf(fp, "  Options (%d):\n", (int)validOptions_.size());
+        for (it=validOptions_.begin(); it!= validOptions_.end(); it++) {
             fprintf(fp, "    %s\n", (*it).c_str());
         }
         fprintf(fp, "  Trigger modes (%d):\n", (int)triggerModeChoices_.size());
