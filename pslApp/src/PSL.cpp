@@ -31,6 +31,7 @@
 #include <epicsExport.h>
 
 #include <string>
+#include <iostream>
 #include <set>
 using namespace std;
 
@@ -82,8 +83,8 @@ private:
     void acquireFrame();
     asynStatus getImage();
     asynStatus getVersion();
-    void getChoices(const char*command, std::set<std::string> *pChoices);
-    const char *getChoiceFromIndex(std::set<std::string> choices, int index);
+    void getChoices(const char *command, std::set<std::string>& choices);
+    const std::string& getChoiceFromIndex(std::set<std::string>& choices, int index);
     asynStatus doEnumCallbacks();
    
     /* Our data */
@@ -93,7 +94,7 @@ private:
     char readBuffer_[READ_BUFFER_SIZE];
     asynUser *pasynUserServer_;
     asynUser *pasynUserCommon_;
-    char serverVersion_[16];
+    float serverVersion_;
     std::set<std::string> validOptions_;
     std::set<std::string> cameraNameChoices_;
     std::set<std::string> triggerModeChoices_;
@@ -167,7 +168,7 @@ PSL::PSL(const char *portName, const char *serverPort,
             driverName, functionName);
         return;
     }
-    getChoices("GetCamList", &cameraNameChoices_);
+    getChoices("GetCamList", cameraNameChoices_);
     
     // Open first camera in list to start with
     openCamera(0);
@@ -208,8 +209,8 @@ PSL::PSL(const char *portName, const char *serverPort,
 asynStatus PSL::openCamera(int cameraId)
 {
     asynStatus status;
-    const char *cameraName = getChoiceFromIndex(cameraNameChoices_, cameraId);
-    
+    const char *cameraName = getChoiceFromIndex(cameraNameChoices_, cameraId).c_str();
+
     status = writeReadServer("Close", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
     epicsSnprintf(toServer_, sizeof(toServer_), "Open;%s", cameraName);
     status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
@@ -217,15 +218,15 @@ asynStatus PSL::openCamera(int cameraId)
     status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
     status = writeReadServer("GetCamNum", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
     nCameras_ = atoi(fromServer_);
-    getChoices("GetOptions",                  &validOptions_);
-    getChoices("GetCamList",                  &cameraNameChoices_);
-    getChoices("GetOptionRange;RecordFormat", &recordFormatChoices_);
-    getChoices("GetOptionRange;TriggerMode",  &triggerModeChoices_);
+    getChoices("GetOptions",                  validOptions_);
+    getChoices("GetCamList",                  cameraNameChoices_);
+    getChoices("GetOptionRange;RecordFormat", recordFormatChoices_);
+    getChoices("GetOptionRange;TriggerMode",  triggerModeChoices_);
     doEnumCallbacks();
     return status;
 }
 
-void PSL::getChoices(const char *command, std::set<std::string> *pChoices)
+void PSL::getChoices(const char *command, std::set<std::string>& choices)
 {
     const size_t optionListLen = 4096;
     char optionList[optionListLen];
@@ -254,20 +255,20 @@ void PSL::getChoices(const char *command, std::set<std::string> *pChoices)
         driverName, functionName);
         return;
     }
-    pChoices->clear();
+    choices.clear();
     while (optionPtr != NULL) {
-        pChoices->insert(std::string(optionPtr));
+        choices.insert(std::string(optionPtr));
         optionPtr = strtok(NULL, "',[] ");
     }
 }
 
-const char* PSL::getChoiceFromIndex(std::set<std::string> choices, int index)
+const std::string& PSL::getChoiceFromIndex(std::set<std::string>& choices, int index)
 {
     std::set<std::string>::iterator it;
     int i;
     
     for (i=0, it=choices.begin(); i<index && it!=choices.end(); i++, it++);
-    return (*it).c_str();
+    return *it;
 }  
 
 asynStatus PSL::writeReadServer(const char *output, char *input, size_t maxChars, double timeout)
@@ -299,32 +300,23 @@ asynStatus PSL::writeReadServer(const char *output, char *input, size_t maxChars
 asynStatus PSL::getVersion()
 {
     asynStatus status;
-    char input[MAX_MESSAGE_SIZE];
+    char input[MAX_MESSAGE_SIZE]="";
     asynUser *pasynUser = pasynUserServer_;
-    const char *expectedResponse = "version PSLViewer-";
+    const char *expectedResponse = "PSLViewer-";
     const char *functionName = "getVersion";
     status = writeReadServer("GetVersion", input, MAX_MESSAGE_SIZE,
                              PSL_SERVER_TIMEOUT);
-    if (status) {
-        asynPrint(pasynUser, ASYN_TRACE_ERROR,
-                  "%s:%s, ERROR, no response from GetVersion command, status=%d. Possibly old server version?\n",
-                  driverName, functionName, status);
-        return asynError;
-    }
-    if (strstr(input, expectedResponse) == 0) {
-        asynPrint(pasynUser, ASYN_TRACE_ERROR,
-                  "%s:%s, ERROR, unexpected response to GetVersion command = \"%s\". Possibly old server version?\n",
-                  driverName, functionName, input);
-        return asynError;
-    }
-    strncpy(serverVersion_, input + strlen(expectedResponse), 3);
-    if (serverVersion_[0] != '4') {
-        asynPrint(pasynUser, ASYN_TRACE_ERROR,
-                  "%s:%s, ERROR, serverVersion_[0]='%c', should be '4'.\n",
-                  driverName, functionName, serverVersion_[0]);
-        return asynError;
-    }
+    if (status) goto bad;
+    if (strstr(input, expectedResponse) == 0)  goto bad;
+    if (sscanf(input + strlen(expectedResponse), "%f", &serverVersion_) != 1) goto bad;    
+    if (serverVersion_ < 4.3) goto bad;
     return asynSuccess;
+    
+    bad:
+    asynPrint(pasynUser, ASYN_TRACE_ERROR,
+              "%s:%s, ERROR, unexpected version string = %s.\n",
+              driverName, functionName, input);
+    return asynError;
 }
 
 asynStatus PSL::getConfig()
@@ -582,11 +574,15 @@ asynStatus PSL::getImage()
     if (strncmp(readBuffer_, "L;", 2) == 0) {
         prefixLen = 2;
         dataType = NDUInt8;
-        nDims = 2;
     } else if (strncmp(readBuffer_, "I;16;", 5) == 0) {
         prefixLen = 5;
         dataType = NDUInt16;
-        nDims = 2;
+    } else if (strncmp(readBuffer_, "I;", 2) == 0) {
+        prefixLen = 2;
+        dataType = NDUInt32;
+    } else if (strncmp(readBuffer_, "F;", 2) == 0) {
+        prefixLen = 2;
+        dataType = NDFloat32;
     } else if (strncmp(readBuffer_, "RGB;", 4) == 0) {
         prefixLen = 4;
         dataType = NDUInt8;
@@ -788,7 +784,7 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
         } 
         if (!value && acquiring) {
             /* This was a command to stop acquisition */
-            status = writeReadServer("Abort", fromServer_,
+            status = writeReadServer("Stop", fromServer_,
                                      sizeof(fromServer_),
                                      PSL_SERVER_TIMEOUT);
             epicsEventSignal(stopEventId_);
@@ -828,7 +824,7 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
         getConfig();
     } else if (function == ADTriggerMode) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetTriggerMode;%s", 
-            getChoiceFromIndex(triggerModeChoices_, value));
+            getChoiceFromIndex(triggerModeChoices_, value).c_str());
         writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         getConfig();
     } else if (function == NDAutoSave) {
@@ -837,7 +833,7 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
         getConfig();
     } else if (function == NDFileFormat) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetRecordFormat;%s",
-                      getChoiceFromIndex(recordFormatChoices_, value));
+                      getChoiceFromIndex(recordFormatChoices_, value).c_str());
         status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         getConfig();
     } else if (function == PSLCameraName_) {
@@ -1021,7 +1017,7 @@ void PSL::report(FILE *fp, int details)
     if (details > 0) {
         std::set<std::string>::iterator it;
         
-        fprintf(fp, "  Server version:    %s\n", serverVersion_);
+        fprintf(fp, "  Server version:    %f\n", serverVersion_);
         fprintf(fp, "  Sub-cameras:       %d\n", nCameras_);
         fprintf(fp, "  Cameras (%d):\n", (int)cameraNameChoices_.size());
         for (it=cameraNameChoices_.begin(); it!= cameraNameChoices_.end(); it++) {
