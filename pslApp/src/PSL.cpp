@@ -31,7 +31,6 @@
 #include <epicsExport.h>
 
 #include <string>
-#include <iostream>
 #include <set>
 using namespace std;
 
@@ -45,6 +44,8 @@ using namespace std;
 
 #define PSLCameraNameString  "PSL_CAMERA_NAME"
 #define PSLTIFFCommentString "PSL_TIFF_COMMENT"
+
+typedef std::set<std::string> choice_t;
 
 
 static const char *driverName = "PSL";
@@ -83,8 +84,8 @@ private:
     void acquireFrame();
     asynStatus getImage();
     asynStatus getVersion();
-    void getChoices(const char *command, std::set<std::string>& choices);
-    const std::string& getChoiceFromIndex(std::set<std::string>& choices, int index);
+    void getChoices(const char *command, choice_t& choices);
+    const std::string& getChoiceFromIndex(choice_t& choices, int index);
     asynStatus doEnumCallbacks();
    
     /* Our data */
@@ -95,10 +96,10 @@ private:
     asynUser *pasynUserServer_;
     asynUser *pasynUserCommon_;
     float serverVersion_;
-    std::set<std::string> validOptions_;
-    std::set<std::string> cameraNameChoices_;
-    std::set<std::string> triggerModeChoices_;
-    std::set<std::string> recordFormatChoices_;
+    choice_t validOptions_;
+    choice_t cameraNameChoices_;
+    choice_t triggerModeChoices_;
+    choice_t recordFormatChoices_;
     int nCameras_;
 };
 #define NUM_PSL_PARAMS ((int)(&LAST_PSL_PARAM - &FIRST_PSL_PARAM + 1))
@@ -169,12 +170,11 @@ PSL::PSL(const char *portName, const char *serverPort,
         return;
     }
     getChoices("GetCamList", cameraNameChoices_);
+    // Add the multi-camera configuration since it is not returned by GetCamList
+    cameraNameChoices_.insert("multiconf");
     
     // Open first camera in list to start with
     openCamera(0);
-
-    /* Compute the sensor size by reading the image size and the binning */
-    status = getConfig();
 
     /* Set some default values for parameters */
     status =  setStringParam (ADManufacturer, "PSL");
@@ -209,6 +209,8 @@ PSL::PSL(const char *portName, const char *serverPort,
 asynStatus PSL::openCamera(int cameraId)
 {
     asynStatus status;
+    char cameraModel[MAX_FILENAME_LEN];
+    int maxSizeX, maxSizeY;
     const char *cameraName = getChoiceFromIndex(cameraNameChoices_, cameraId).c_str();
 
     status = writeReadServer("Close", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
@@ -218,15 +220,23 @@ asynStatus PSL::openCamera(int cameraId)
     status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
     status = writeReadServer("GetCamNum", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
     nCameras_ = atoi(fromServer_);
+    status = writeReadServer("GetName", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    sscanf(fromServer_, "%s", cameraModel);
+    setStringParam(ADModel, cameraModel);
+    setStringParam(ADManufacturer, "PSL");
+    status = writeReadServer("GetMaximumSize", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    sscanf(fromServer_, "(%d,%d)", &maxSizeX, &maxSizeY);
+    setIntegerParam(ADMaxSizeX, maxSizeX);
+    setIntegerParam(ADMaxSizeY, maxSizeY);
     getChoices("GetOptions",                  validOptions_);
-    getChoices("GetCamList",                  cameraNameChoices_);
     getChoices("GetOptionRange;RecordFormat", recordFormatChoices_);
     getChoices("GetOptionRange;TriggerMode",  triggerModeChoices_);
+    getConfig();
     doEnumCallbacks();
     return status;
 }
 
-void PSL::getChoices(const char *command, std::set<std::string>& choices)
+void PSL::getChoices(const char *command, choice_t& choices)
 {
     const size_t optionListLen = 4096;
     char optionList[optionListLen];
@@ -262,9 +272,9 @@ void PSL::getChoices(const char *command, std::set<std::string>& choices)
     }
 }
 
-const std::string& PSL::getChoiceFromIndex(std::set<std::string>& choices, int index)
+const std::string& PSL::getChoiceFromIndex(choice_t& choices, int index)
 {
-    std::set<std::string>::iterator it;
+    choice_t::iterator it;
     int i;
     
     for (i=0, it=choices.begin(); i<index && it!=choices.end(); i++, it++);
@@ -323,50 +333,19 @@ asynStatus PSL::getConfig()
 {
     int minX, minY, sizeX, sizeY, binX, binY, right, bottom, reverseX, reverseY, imageSize;
     int i;
-    std::set<std::string>::iterator it;
-    char filePath[MAX_FILENAME_LEN];
-    char fileName[MAX_FILENAME_LEN];
-    char fileFormatString[MAX_FILENAME_LEN];
-    char cameraModel[MAX_FILENAME_LEN];
+    choice_t::iterator it;
     int fileNumber;
     double exposure;
     asynStatus status;
-    bool maxSize = 0;
-    char *pFromServer;
+    char *pStart;
     static const char* functionName="getConfig";
     
-    if (validOptions_.count("SizeMax")) {
-        status = writeReadServer("GetSizeMax", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-        if (status == asynSuccess) {
-            sscanf(fromServer_, "(%d,%d)", &sizeX, &sizeY);
-            setIntegerParam(ADMaxSizeX, sizeX);
-            setIntegerParam(ADMaxSizeY, sizeY);
-            maxSize = 1;
-        }
-    }
     status = writeReadServer("GetSize", fromServer_,
                              sizeof(fromServer_), PSL_SERVER_TIMEOUT);
     if (status == asynSuccess) {
         sscanf(fromServer_, "(%d,%d)", &sizeX, &sizeY);
         setIntegerParam(NDArraySizeX, sizeX);
         setIntegerParam(NDArraySizeY, sizeY);
-        if (!maxSize) {
-            setIntegerParam(ADMaxSizeX, sizeX);
-            setIntegerParam(ADMaxSizeY, sizeY);
-        }
-    }
-    if (validOptions_.count("Name")) {
-        status = writeReadServer("GetName", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-        if (status == asynSuccess) {
-            sscanf(fromServer_, "%s", cameraModel);
-            setStringParam(ADModel, cameraModel);
-            setStringParam(ADManufacturer, "PSL");
-        }
-    } else {
-        setStringParam(ADModel, "");
-        setStringParam(ADManufacturer, "PSL");
     }
     // GetMode is always supported
     status = writeReadServer("GetMode", fromServer_,
@@ -389,13 +368,10 @@ asynStatus PSL::getConfig()
         status = writeReadServer("GetTriggerMode", fromServer_,
                                  sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         if (status == asynSuccess) {
-            if (nCameras_ > 1) {
-                pFromServer = strtok(&(fromServer_[2]), "'");
-            } else {
-                pFromServer = fromServer_;
-            }
+            pStart=fromServer_;            
+            if (nCameras_ > 1)  pStart = strtok(fromServer_+2, "'");
             for (i=0, it=triggerModeChoices_.begin(); it!=triggerModeChoices_.end(); i++, it++) {
-                if (*it == pFromServer) {
+                if (*it == pStart) {
                     setIntegerParam(ADTriggerMode, i);
                     break;
                 }
@@ -403,17 +379,16 @@ asynStatus PSL::getConfig()
             if (i == (int)triggerModeChoices_.size())
                 asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
                           "%s:%s: unknown trigger mode=%s\n",
-                          driverName, functionName, pFromServer);
+                          driverName, functionName, pStart);
         }
     }
     if (validOptions_.count("Exposure")) {
         status = writeReadServer("GetExposure", fromServer_,
                                  sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         if (status == asynSuccess) {
-            if (nCameras_ > 1)
-                sscanf(fromServer_, "[(%lf", &exposure);
-            else 
-                sscanf(fromServer_, "(%lf", &exposure);
+            pStart=fromServer_;            
+            if (nCameras_ > 1)  pStart=fromServer_+1;
+            sscanf(pStart, "(%lf", &exposure);
             if (strstr(fromServer_, "Millisec")) exposure = exposure/1e3;
             else if (strstr(fromServer_, "Microsec")) exposure = exposure/1e6;
             setDoubleParam(ADAcquireTime, exposure);
@@ -425,7 +400,9 @@ asynStatus PSL::getConfig()
         status = writeReadServer("GetBinning", fromServer_,
                                  sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         if (status == asynSuccess) {
-            sscanf(fromServer_, "(%d,%d)", &binX, &binY);
+            pStart=fromServer_;            
+            if (nCameras_ > 1)  pStart=fromServer_+1;
+            sscanf(pStart, "(%d,%d)", &binX, &binY);
             setIntegerParam(ADBinX, binX);
             setIntegerParam(ADBinY, binY);
         }
@@ -434,17 +411,9 @@ asynStatus PSL::getConfig()
         status = writeReadServer("GetSubArea", fromServer_,
                                  sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         if (status == asynSuccess) {
-            if (nCameras_ > 1) {
-                sscanf(fromServer_, "[(%d, %d, %d, %d)",
-                       &minX, &minY, &right, &bottom);
-// This should only depend on number of detectors
-                right *= 2; bottom *= 2;
-                sizeX = minX - right;
-                sizeY = minY - bottom;
-            } else {
-                sscanf(fromServer_, "(%d,%d,%d,%d)",
-                       &minX, &minY, &right, &bottom);
-            }
+            pStart=fromServer_;            
+            if (nCameras_ > 1)  pStart=fromServer_+1;
+            sscanf(pStart, "(%d,%d,%d,%d)", &minX, &minY, &right, &bottom);
             setIntegerParam(ADMinX, minX);
             setIntegerParam(ADMinY, minY);
             sizeX = right - minX;
@@ -472,33 +441,41 @@ asynStatus PSL::getConfig()
         }
     }
     if (validOptions_.count("RecordPath")) {
-        status = writeReadServer("GetRecordPath", filePath,
-                                 sizeof(filePath), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetRecordPath", fromServer_,
+                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         if (status == asynSuccess) {
-            setStringParam(NDFilePath, filePath);
+            pStart=fromServer_;            
+            if (nCameras_ > 1)  pStart = strtok(fromServer_+2, "'");
+            setStringParam(NDFilePath, pStart);
         }
     }
     if (validOptions_.count("RecordName")) {
-        status = writeReadServer("GetRecordName", fileName,
-                                 sizeof(fileName), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetRecordName", fromServer_,
+                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         if (status == asynSuccess) {
-            setStringParam(NDFileName, fileName);
+            pStart=fromServer_;            
+            if (nCameras_ > 1)  pStart = strtok(fromServer_+2, "'");
+            setStringParam(NDFileName, pStart);
         }
     }
     if (validOptions_.count("RecordNumber")) {
         status = writeReadServer("GetRecordNumber", fromServer_,
                                  sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         if (status == asynSuccess) {
-            sscanf(fromServer_, "%d", &fileNumber);
+            pStart=fromServer_;            
+            if (nCameras_ > 1)  pStart=fromServer_+1;
+            sscanf(pStart, "%d", &fileNumber);
             setIntegerParam(NDFileNumber, fileNumber);
         }
     }
     if (validOptions_.count("RecordFormat")) {
-        status = writeReadServer("GetRecordFormat", fileFormatString,
-                                 sizeof(fileFormatString), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetRecordFormat", fromServer_,
+                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         if (status == asynSuccess) {
+            pStart=fromServer_;            
+            if (nCameras_ > 1)  pStart = strtok(fromServer_+2, "'");
             for (i=0, it=recordFormatChoices_.begin(); it!=recordFormatChoices_.end(); i++, it++) {
-                if (*it == fileFormatString) {
+                if (*it == pStart) {
                     setIntegerParam(NDFileFormat, i);
                     break;
                 }
@@ -506,7 +483,7 @@ asynStatus PSL::getConfig()
             if (i == (int)recordFormatChoices_.size()) {
                 asynPrint(pasynUserSelf, ASYN_TRACE_ERROR,
                           "%s:%s: error, unknown file format string = %s\n",
-                          driverName, functionName, fileFormatString);
+                          driverName, functionName, pStart);
                 //return(asynError);
             }
         }
@@ -515,7 +492,9 @@ asynStatus PSL::getConfig()
         status = writeReadServer("GetRecordTag", fromServer_,
                                  sizeof(fromServer_), PSL_SERVER_TIMEOUT);
         if (status == asynSuccess) {
-            setStringParam(PSLTIFFComment_, fromServer_);
+            pStart=fromServer_;            
+            if (nCameras_ > 1)  pStart = strtok(fromServer_+2, "'");
+            setStringParam(PSLTIFFComment_, pStart);
         }
     }
 
@@ -796,7 +775,6 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
         getIntegerParam(ADBinY, &binY);
         epicsSnprintf(toServer_, sizeof(toServer_), "SetBinning;(%d,%d)", binX, binY);
         writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-        getConfig();
     } else if ((function == ADMinX) ||
                (function == ADMinY) ||
                (function == ADSizeX) ||
@@ -813,40 +791,34 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
         status = writeReadServer(toServer_, fromServer_,
                                  sizeof(fromServer_),
                                  PSL_SERVER_TIMEOUT);
-        getConfig();
     } else if (function == ADReverseX) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetFliplr;%d", value);
         writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-        getConfig();
     } else if (function == ADReverseY) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetFlipud;%d", value);
         writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-        getConfig();
     } else if (function == ADTriggerMode) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetTriggerMode;%s", 
             getChoiceFromIndex(triggerModeChoices_, value).c_str());
         writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-        getConfig();
     } else if (function == NDAutoSave) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetAutoSave;%d", value);
         status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-        getConfig();
     } else if (function == NDFileFormat) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetRecordFormat;%s",
                       getChoiceFromIndex(recordFormatChoices_, value).c_str());
         status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-        getConfig();
     } else if (function == PSLCameraName_) {
         status = openCamera(value);
     } else if (function == NDFileNumber) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetRecordNumber;%d", value);
         status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-        getConfig();
     } else {
         /* If this parameter belongs to a base class call its method */
         if (function < FIRST_PSL_PARAM) status = ADDriver::writeInt32(pasynUser, value);
     }
         
+    getConfig();
     /* Do callbacks so higher layers see any changes */
     callParamCallbacks();
     
@@ -885,12 +857,12 @@ asynStatus PSL::writeFloat64(asynUser *pasynUser, epicsFloat64 value)
                           "SetExpoMS;%d", (int)(value*1e3 + 0.5));
         }
         status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-        getConfig();
     } else {
         /* If this parameter belongs to a base class call its method */
         if (function < FIRST_PSL_PARAM) status = ADDriver::writeFloat64(pasynUser, value);
     }
         
+    getConfig();
     /* Do callbacks so higher layers see any changes */
     callParamCallbacks();
     
@@ -936,8 +908,9 @@ asynStatus PSL::writeOctet(asynUser *pasynUser, const char *value,
         /* If this parameter belongs to a base class call its method */
         if (function < FIRST_PSL_PARAM) status = ADDriver::writeOctet(pasynUser, value, nChars, nActual);
     }
+    getConfig();
      /* Do callbacks so higher layers see any changes */
-    status = (asynStatus)callParamCallbacks();
+    callParamCallbacks();
 
     if (status) 
         epicsSnprintf(pasynUser->errorMessage, pasynUser->errorMessageSize, 
@@ -957,8 +930,8 @@ asynStatus PSL::readEnum(asynUser *pasynUser, char *strings[], int values[], int
 {
     int function = pasynUser->reason;
     int i;
-    std::set<std::string> choices;
-    std::set<std::string>::iterator it;
+    choice_t choices;
+    choice_t::iterator it;
 
     if (function == PSLCameraName_) {
         choices = cameraNameChoices_;
@@ -985,8 +958,8 @@ asynStatus PSL::doEnumCallbacks()
 {
     int function, i;
     int functions[] = {NDFileFormat, ADTriggerMode, PSLCameraName_};
-    std::set<std::string> choices[] = {recordFormatChoices_, triggerModeChoices_, cameraNameChoices_};
-    std::set<std::string>::iterator it;
+    choice_t choices[] = {recordFormatChoices_, triggerModeChoices_, cameraNameChoices_};
+    choice_t::iterator it;
     char *strings[MAX_CHOICES];
     int values[MAX_CHOICES];
     int severities[MAX_CHOICES];   
@@ -1015,7 +988,7 @@ void PSL::report(FILE *fp, int details)
 {
     fprintf(fp, "PSL detector %s\n", this->portName);
     if (details > 0) {
-        std::set<std::string>::iterator it;
+        choice_t::iterator it;
         
         fprintf(fp, "  Server version:    %f\n", serverVersion_);
         fprintf(fp, "  Sub-cameras:       %d\n", nCameras_);
