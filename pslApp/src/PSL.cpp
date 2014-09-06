@@ -34,11 +34,10 @@
 #include <set>
 using namespace std;
 
-/** Messages to/from server */
-#define MAX_MESSAGE_SIZE 256
+// Messages to/from server.  Needs to be big enough for binary reads of images that seem to come in 2048 blocks
+#define MAX_MESSAGE_SIZE 4096
 #define MAX_FILENAME_LEN 256
 #define PSL_SERVER_TIMEOUT 2.0
-#define READ_BUFFER_SIZE 4096
 #define MAX_CHOICES 64
 
 
@@ -79,9 +78,9 @@ protected:
 private:                                        
     /* These are the methods that are new to this class */
     asynStatus writeReadServer(const char *output, char *input, size_t maxChars, double timeout);
+    asynStatus writeReadServer(const char *output);
     asynStatus openCamera(int cameraId);
     asynStatus getConfig();
-    void acquireFrame();
     asynStatus getImage();
     asynStatus getVersion();
     void getChoices(const char *command, choice_t& choices);
@@ -92,7 +91,8 @@ private:
     epicsEventId startEventId_;
     char toServer_[MAX_MESSAGE_SIZE];
     char fromServer_[MAX_MESSAGE_SIZE];
-    char readBuffer_[READ_BUFFER_SIZE];
+    size_t nRead_;
+    size_t nWrite_;
     asynUser *pasynUserServer_;
     asynUser *pasynUserCommon_;
     float serverVersion_;
@@ -213,18 +213,18 @@ asynStatus PSL::openCamera(int cameraId)
     int maxSizeX, maxSizeY;
     const char *cameraName = getChoiceFromIndex(cameraNameChoices_, cameraId).c_str();
 
-    status = writeReadServer("Close", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    status = writeReadServer("Close");
     epicsSnprintf(toServer_, sizeof(toServer_), "Open;%s", cameraName);
-    status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    status = writeReadServer(toServer_);
     epicsSnprintf(toServer_, sizeof(toServer_), "Select;%s", cameraName);
-    status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
-    status = writeReadServer("GetCamNum", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    status = writeReadServer(toServer_);
+    status = writeReadServer("GetCamNum");
     nCameras_ = atoi(fromServer_);
-    status = writeReadServer("GetCam", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    status = writeReadServer("GetCam");
     sscanf(fromServer_, "%s", cameraModel);
     setStringParam(ADModel, cameraModel);
     setStringParam(ADManufacturer, "PSL");
-    status = writeReadServer("GetMaximumSize", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    status = writeReadServer("GetMaximumSize");
     sscanf(fromServer_, "(%d,%d)", &maxSizeX, &maxSizeY);
     setIntegerParam(ADMaxSizeX, maxSizeX);
     setIntegerParam(ADMaxSizeY, maxSizeY);
@@ -238,24 +238,21 @@ asynStatus PSL::openCamera(int cameraId)
 
 void PSL::getChoices(const char *command, choice_t& choices)
 {
-    const size_t optionListLen = 4096;
-    char optionList[optionListLen];
-    char *optionPtr = optionList;
-    char *pBracket = optionList;
+    char *optionPtr = fromServer_;
+    char *pBracket = fromServer_;
     asynStatus status;
     static const char *functionName = "getChoices";
     
-    status = writeReadServer(command, optionList, optionListLen,
-                             PSL_SERVER_TIMEOUT);
+    status = writeReadServer(command);
     if (status != asynSuccess)
         asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
                   "%s::%s error in write/read to server %d\n",
                   driverName, functionName, status);
     while ((pBracket = strchr(++pBracket, (int)'[')) != NULL);
     if (nCameras_ > 1) {
-        optionPtr = strtok(optionList, "[]");
+        optionPtr = strtok(fromServer_, "[]");
     } else {
-        optionPtr = optionList;
+        optionPtr = fromServer_;
     }
     // Look for ' and , delimited options
     optionPtr = strtok(optionPtr, "',[] ");
@@ -281,10 +278,15 @@ const std::string& PSL::getChoiceFromIndex(choice_t& choices, int index)
     return *it;
 }  
 
+asynStatus PSL::writeReadServer(const char *output)
+{
+    return writeReadServer(output, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+}
+
+
 asynStatus PSL::writeReadServer(const char *output, char *input, size_t maxChars, double timeout)
 {
     asynStatus status;
-    size_t nwrite, nread;
     int eomReason;
     asynUser *pasynUser = pasynUserServer_;
     const char *functionName="writeReadServer";
@@ -294,7 +296,7 @@ asynStatus PSL::writeReadServer(const char *output, char *input, size_t maxChars
     status = pasynCommonSyncIO->connectDevice(pasynUserCommon_);
     status = pasynOctetSyncIO->writeRead(pasynUser, output, strlen(output), 
                                          input, maxChars, timeout,
-                                         &nwrite, &nread, &eomReason);
+                                         &nWrite_, &nRead_, &eomReason);
                                         
     if (status) asynPrint(pasynUser, ASYN_TRACE_ERROR,
                     "%s:%s, status=%d, sent\n%s\n",
@@ -302,30 +304,29 @@ asynStatus PSL::writeReadServer(const char *output, char *input, size_t maxChars
 
     /* Set output string so it can get back to EPICS */
     setStringParam(ADStringToServer, output);
+    setStringParam(ADStringFromServer, input);
     callParamCallbacks();
 
-    return(status);
+    return status;
 }
 
 asynStatus PSL::getVersion()
 {
     asynStatus status;
-    char input[MAX_MESSAGE_SIZE]="";
     asynUser *pasynUser = pasynUserServer_;
     const char *expectedResponse = "PSLViewer-";
     const char *functionName = "getVersion";
-    status = writeReadServer("GetVersion", input, MAX_MESSAGE_SIZE,
-                             PSL_SERVER_TIMEOUT);
+    status = writeReadServer("GetVersion");
     if (status) goto bad;
-    if (strstr(input, expectedResponse) == 0)  goto bad;
-    if (sscanf(input + strlen(expectedResponse), "%f", &serverVersion_) != 1) goto bad;    
+    if (strstr(fromServer_, expectedResponse) == 0)  goto bad;
+    if (sscanf(fromServer_ + strlen(expectedResponse), "%f", &serverVersion_) != 1) goto bad;    
     if (serverVersion_ < 4.3) goto bad;
     return asynSuccess;
     
     bad:
     asynPrint(pasynUser, ASYN_TRACE_ERROR,
               "%s:%s, ERROR, unexpected version string = %s.\n",
-              driverName, functionName, input);
+              driverName, functionName, fromServer_);
     return asynError;
 }
 
@@ -341,16 +342,14 @@ asynStatus PSL::getConfig()
     char *pStart;
     static const char* functionName="getConfig";
     
-    status = writeReadServer("GetSize", fromServer_,
-                             sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    status = writeReadServer("GetSize");
     if (status == asynSuccess) {
         sscanf(fromServer_, "(%d,%d)", &sizeX, &sizeY);
         setIntegerParam(NDArraySizeX, sizeX);
         setIntegerParam(NDArraySizeY, sizeY);
     }
     // GetMode is always supported
-    status = writeReadServer("GetMode", fromServer_,
-                             sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    status = writeReadServer("GetMode");
     if (status == asynSuccess) {
         setIntegerParam(NDColorMode, NDColorModeMono);
         if (strcmp(fromServer_, "L") == 0)         setIntegerParam(NDDataType, NDUInt8);
@@ -366,8 +365,7 @@ asynStatus PSL::getConfig()
                        driverName, functionName, fromServer_);
     }
     if (validOptions_.count("TriggerMode")) {
-        status = writeReadServer("GetTriggerMode", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetTriggerMode");
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart = strtok(fromServer_+2, "'");
@@ -384,8 +382,7 @@ asynStatus PSL::getConfig()
         }
     }
     if (validOptions_.count("Exposure")) {
-        status = writeReadServer("GetExposure", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetExposure");
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart=fromServer_+1;
@@ -396,8 +393,7 @@ asynStatus PSL::getConfig()
         }
     }
     if (validOptions_.count("ChipGain")) {
-        status = writeReadServer("GetChipGain", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetChipGain");
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart=fromServer_+1;
@@ -408,8 +404,7 @@ asynStatus PSL::getConfig()
     setIntegerParam(ADBinX, 1);
     setIntegerParam(ADBinY, 1);
     if (validOptions_.count("Binning")) {
-        status = writeReadServer("GetBinning", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetBinning");
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart=fromServer_+1;
@@ -419,8 +414,7 @@ asynStatus PSL::getConfig()
         }
     }
     if (validOptions_.count("SubArea")) {
-        status = writeReadServer("GetSubArea", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetSubArea");
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart=fromServer_+1;
@@ -436,24 +430,21 @@ asynStatus PSL::getConfig()
         }
     }
     if (validOptions_.count("Fliplr")) {
-        status = writeReadServer("GetFliplr", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetFliplr");
         if (status == asynSuccess) {
             sscanf(fromServer_, "%d", &reverseX);
             setIntegerParam(ADReverseX, reverseX);
         }
     }
     if (validOptions_.count("Flipud")) {
-        status = writeReadServer("GetFlipud", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetFlipud");
         if (status == asynSuccess) {
             sscanf(fromServer_, "%d", &reverseY);
             setIntegerParam(ADReverseY, reverseY);
         }
     }
     if (validOptions_.count("RecordPath")) {
-        status = writeReadServer("GetRecordPath", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetRecordPath");
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart = strtok(fromServer_+2, "'");
@@ -461,8 +452,7 @@ asynStatus PSL::getConfig()
         }
     }
     if (validOptions_.count("RecordName")) {
-        status = writeReadServer("GetRecordName", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetRecordName");
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart = strtok(fromServer_+2, "'");
@@ -470,8 +460,7 @@ asynStatus PSL::getConfig()
         }
     }
     if (validOptions_.count("RecordNumber")) {
-        status = writeReadServer("GetRecordNumber", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetRecordNumber");
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart=fromServer_+1;
@@ -480,8 +469,7 @@ asynStatus PSL::getConfig()
         }
     }
     if (validOptions_.count("RecordFormat")) {
-        status = writeReadServer("GetRecordFormat", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetRecordFormat");
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart = strtok(fromServer_+2, "'");
@@ -495,13 +483,12 @@ asynStatus PSL::getConfig()
                 asynPrint(pasynUserSelf, ASYN_TRACE_ERROR,
                           "%s:%s: error, unknown file format string = %s\n",
                           driverName, functionName, pStart);
-                //return(asynError);
+                //return asynError;
             }
         }
     }
     if (validOptions_.count("RecordTag")) {
-        status = writeReadServer("GetRecordTag", fromServer_,
-                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer("GetRecordTag");
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart = strtok(fromServer_+2, "'");
@@ -510,17 +497,9 @@ asynStatus PSL::getConfig()
     }
 
     callParamCallbacks();
-    return(asynSuccess);
+    return asynSuccess;
 }
 
-void PSL::acquireFrame()
-{
-    double acquireTime, timeout;
-
-    getDoubleParam(ADAcquireTime, &acquireTime);
-    timeout = acquireTime + 10.;
-    writeReadServer("Snap", fromServer_, sizeof(fromServer_), timeout);
-}
 
 asynStatus PSL::getImage()
 {
@@ -531,7 +510,6 @@ asynStatus PSL::getImage()
     int dataLen;
     int nCopied;
     int eomReason;
-    size_t nWrite, nRead;
     int maxRead;
     int headerLen;
     int prefixLen=0;
@@ -545,42 +523,29 @@ asynStatus PSL::getImage()
     char *pIn;
     const char *functionName = "getImage";
 
-    asynPrint(pasynUserSelf, ASYN_TRACE_FLOW, 
-        "%s:%s: beginning image readout\n",
-        driverName, functionName);
-    status = pasynCommonSyncIO->disconnectDevice(pasynUserCommon_);
-    status = pasynCommonSyncIO->connectDevice(pasynUserCommon_);
-    status = pasynOctetSyncIO->writeRead(pasynUserServer_, "GetImage", strlen("GetImage"), 
-                                         readBuffer_, sizeof(readBuffer_), PSL_SERVER_TIMEOUT,
-                                         &nWrite, &nRead, &eomReason);
-    if (status != asynSuccess) {
-        asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
-            "%s:%s: error in GetImage command, status=%d\n",
-            driverName, functionName, status);
-        return status;
-    }
+    writeReadServer("GetImage");
     nDims = 2;
     colorMode = NDColorModeMono;
-    if (strncmp(readBuffer_, "L;", 2) == 0) {
+    if (strncmp(fromServer_, "L;", 2) == 0) {
         prefixLen = 2;
         dataType = NDUInt8;
-    } else if (strncmp(readBuffer_, "I;16;", 5) == 0) {
+    } else if (strncmp(fromServer_, "I;16;", 5) == 0) {
         prefixLen = 5;
         dataType = NDUInt16;
-    } else if (strncmp(readBuffer_, "I;", 2) == 0) {
+    } else if (strncmp(fromServer_, "I;", 2) == 0) {
         prefixLen = 2;
         dataType = NDUInt32;
-    } else if (strncmp(readBuffer_, "F;", 2) == 0) {
+    } else if (strncmp(fromServer_, "F;", 2) == 0) {
         prefixLen = 2;
         dataType = NDFloat32;
-    } else if (strncmp(readBuffer_, "RGB;", 4) == 0) {
+    } else if (strncmp(fromServer_, "RGB;", 4) == 0) {
         prefixLen = 4;
         dataType = NDUInt8;
         nDims = 3;
         colorMode = NDColorModeRGB1;
     }
     setIntegerParam(NDDataType, dataType);
-    sscanf(readBuffer_+prefixLen, "%d;%d;%d;%n", &itemp1, &itemp2, &dataLen, &sizeLen);
+    sscanf(fromServer_+prefixLen, "%d;%d;%d;%n", &itemp1, &itemp2, &dataLen, &sizeLen);
     if (nDims == 2) {
         dims[0] = itemp1;
         dims[1] = itemp2;
@@ -600,26 +565,26 @@ asynStatus PSL::getImage()
     setIntegerParam(NDArraySizeY, itemp2);
     if ((dims[0] <= 0) || (dims[1] <= 0)) return asynError;
     pImage = this->pNDArrayPool->alloc(nDims, dims, dataType, 0, NULL);
-    pIn = readBuffer_ + headerLen;
+    pIn = fromServer_ + headerLen;
     pOut = (char *)pImage->pData;
-    nRead -= headerLen;
-    for (nCopied=0; nCopied<dataLen; nCopied+=(int)nRead) {
+    nRead_ -= headerLen;
+    for (nCopied=0; nCopied<dataLen; nCopied+=(int)nRead_) {
         if (nCopied > 0) {
-            maxRead = sizeof(readBuffer_);
+            maxRead = sizeof(fromServer_);
             if (maxRead > (dataLen - nCopied)) maxRead = dataLen - nCopied;
-            status = pasynOctetSyncIO->read(pasynUserServer_, readBuffer_, maxRead, 1,
-                                            &nRead, &eomReason);
+            status = pasynOctetSyncIO->read(pasynUserServer_, fromServer_, maxRead, 1,
+                                            &nRead_, &eomReason);
             if (status != asynSuccess) {
                 asynPrint(pasynUserSelf, ASYN_TRACE_ERROR, 
                     "%s:%s: error reading image, status=%d, dataLen=%d, nCopied=%d, maxRead=%d, nRead=%d\n",
                     driverName, functionName, status, dataLen, nCopied, 
-                    (int)maxRead, (int)nRead);
+                    (int)maxRead, (int)nRead_);
                 break;
             }
-            pIn = readBuffer_;
+            pIn = fromServer_;
         }
-        memcpy(pOut, pIn, nRead);
-        pOut+= nRead;
+        memcpy(pOut, pIn, nRead_);
+        pOut+= nRead_;
     }
     asynPrint(pasynUserSelf, ASYN_TRACE_FLOW, 
         "%s:%s: end of image readout\n",
@@ -627,7 +592,7 @@ asynStatus PSL::getImage()
 
     getIntegerParam(NDArrayCounter, &imageCounter);
 
-    /* Put the frame number and time stamp into the buffer */
+    /* Put the frame number and time stamp into the NDArray */
     epicsTimeGetCurrent(&now);
     pImage->uniqueId = imageCounter;
     pImage->timeStamp = now.secPastEpoch + now.nsec / 1.e9;
@@ -649,7 +614,7 @@ asynStatus PSL::getImage()
 
     /* Free the image buffer */
     pImage->release();
-    return(asynSuccess);
+    return asynSuccess;
 }
 
 /** This thread controls acquisition, reads TIFF files to get the image data, and
@@ -697,7 +662,7 @@ void PSL::PSLTask()
         getIntegerParam(NDArrayCallbacks, &arrayCallbacks);
         
         epicsTimeGetCurrent(&acqStartTime);
-        acquireFrame();
+        writeReadServer("Snap");
         
         getIntegerParam(NDArrayCounter, &imageCounter);
         imageCounter++;
@@ -711,7 +676,7 @@ void PSL::PSLTask()
         /* If arrayCallbacks is set then read the data, do callbacks */
         if (arrayCallbacks) {
             while (1) {
-                writeReadServer("HasNewData", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+                writeReadServer("HasNewData");
                 if (strcmp(fromServer_, "True") == 0) break;
                 unlock();
                 waitStatus = epicsEventWaitWithTimeout(stopEventId_, 0.1);
@@ -774,9 +739,7 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
         } 
         if (!value && acquiring) {
             /* This was a command to stop acquisition */
-            status = writeReadServer("Stop", fromServer_,
-                                     sizeof(fromServer_),
-                                     PSL_SERVER_TIMEOUT);
+            status = writeReadServer("Stop");
             epicsEventSignal(stopEventId_);
         }
     } else if ((function == ADBinX) ||
@@ -785,7 +748,7 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
         getIntegerParam(ADBinX, &binX);
         getIntegerParam(ADBinY, &binY);
         epicsSnprintf(toServer_, sizeof(toServer_), "SetBinning;(%d,%d)", binX, binY);
-        writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        writeReadServer(toServer_);
     } else if ((function == ADMinX) ||
                (function == ADMinY) ||
                (function == ADSizeX) ||
@@ -799,31 +762,29 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
         epicsSnprintf(toServer_, sizeof(toServer_),
                       "SetSubArea;(%d,%d,%d,%d)",
                       minX, minY, minX+sizeX, minY+sizeY);
-        status = writeReadServer(toServer_, fromServer_,
-                                 sizeof(fromServer_),
-                                 PSL_SERVER_TIMEOUT);
+        status = writeReadServer(toServer_);
     } else if (function == ADReverseX) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetFliplr;%d", value);
-        writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        writeReadServer(toServer_);
     } else if (function == ADReverseY) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetFlipud;%d", value);
-        writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        writeReadServer(toServer_);
     } else if (function == ADTriggerMode) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetTriggerMode;%s", 
             getChoiceFromIndex(triggerModeChoices_, value).c_str());
-        writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        writeReadServer(toServer_);
     } else if (function == NDAutoSave) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetAutoSave;%d", value);
-        status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer(toServer_);
     } else if (function == NDFileFormat) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetRecordFormat;%s",
                       getChoiceFromIndex(recordFormatChoices_, value).c_str());
-        status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer(toServer_);
     } else if (function == PSLCameraName_) {
         status = openCamera(value);
     } else if (function == NDFileNumber) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetRecordNumber;%d", value);
-        status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer(toServer_);
     } else {
         /* If this parameter belongs to a base class call its method */
         if (function < FIRST_PSL_PARAM) status = ADDriver::writeInt32(pasynUser, value);
@@ -867,10 +828,10 @@ asynStatus PSL::writeFloat64(asynUser *pasynUser, epicsFloat64 value)
             epicsSnprintf(toServer_, sizeof(toServer_),
                           "SetExpoMS;%d", (int)(value*1e3 + 0.5));
         }
-        status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer(toServer_);
     } else if (function == ADGain) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetChipGain;%f", value);
-        status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer(toServer_);
     } else {
         /* If this parameter belongs to a base class call its method */
         if (function < FIRST_PSL_PARAM) status = ADDriver::writeFloat64(pasynUser, value);
@@ -910,14 +871,14 @@ asynStatus PSL::writeOctet(asynUser *pasynUser, const char *value,
     // Need to find out if these commands are still supported in the server
     if (function == NDFilePath) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetRecordPath;%s", value);
-        status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer(toServer_);
         checkPath();
     } else if (function == NDFileName) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetRecordName;%s", value);
-        status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer(toServer_);
     } else if (function == PSLTIFFComment_) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetRecordTag;%s", value);
-        status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        status = writeReadServer(toServer_);
     } else {
         /* If this parameter belongs to a base class call its method */
         if (function < FIRST_PSL_PARAM) status = ADDriver::writeOctet(pasynUser, value, nChars, nActual);
@@ -1032,7 +993,7 @@ extern "C" int PSLConfig(const char *portName, const char *serverPort,
                             int priority, int stackSize)
 {
     new PSL(portName, serverPort, maxBuffers, maxMemory, priority, stackSize);
-    return(asynSuccess);
+    return asynSuccess;
 }
 
 
