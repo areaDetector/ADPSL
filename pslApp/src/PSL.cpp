@@ -220,7 +220,7 @@ asynStatus PSL::openCamera(int cameraId)
     status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
     status = writeReadServer("GetCamNum", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
     nCameras_ = atoi(fromServer_);
-    status = writeReadServer("GetName", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    status = writeReadServer("GetCam", fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
     sscanf(fromServer_, "%s", cameraModel);
     setStringParam(ADModel, cameraModel);
     setStringParam(ADManufacturer, "PSL");
@@ -401,7 +401,7 @@ asynStatus PSL::getConfig()
         if (status == asynSuccess) {
             pStart=fromServer_;            
             if (nCameras_ > 1)  pStart=fromServer_+1;
-            sscanf(pStart, "(%lf", &gain);
+            sscanf(pStart, "%lf", &gain);
             setDoubleParam(ADGain, gain);
         }
     }
