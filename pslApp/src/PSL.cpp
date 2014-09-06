@@ -336,6 +336,7 @@ asynStatus PSL::getConfig()
     choice_t::iterator it;
     int fileNumber;
     double exposure;
+    double gain;
     asynStatus status;
     char *pStart;
     static const char* functionName="getConfig";
@@ -392,6 +393,16 @@ asynStatus PSL::getConfig()
             if (strstr(fromServer_, "Millisec")) exposure = exposure/1e3;
             else if (strstr(fromServer_, "Microsec")) exposure = exposure/1e6;
             setDoubleParam(ADAcquireTime, exposure);
+        }
+    }
+    if (validOptions_.count("ChipGain")) {
+        status = writeReadServer("GetChipGain", fromServer_,
+                                 sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+        if (status == asynSuccess) {
+            pStart=fromServer_;            
+            if (nCameras_ > 1)  pStart=fromServer_+1;
+            sscanf(pStart, "(%lf", &gain);
+            setDoubleParam(ADGain, gain);
         }
     }
     setIntegerParam(ADBinX, 1);
@@ -856,6 +867,9 @@ asynStatus PSL::writeFloat64(asynUser *pasynUser, epicsFloat64 value)
             epicsSnprintf(toServer_, sizeof(toServer_),
                           "SetExpoMS;%d", (int)(value*1e3 + 0.5));
         }
+        status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+    } else if (function == ADGain) {
+        epicsSnprintf(toServer_, sizeof(toServer_), "SetChipGain;%f", value);
         status = writeReadServer(toServer_, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
     } else {
         /* If this parameter belongs to a base class call its method */
