@@ -1,6 +1,6 @@
 
 file {
-	name="/home/epics/devel/areaDetector/ADPSL/pslApp/op/adl/PSL.adl"
+	name="/home/epics/devel/areaDetector-2-0/ADPSL/pslApp/op/adl/PSL.adl"
 	version=030107
 }
 display {
@@ -1485,6 +1485,7 @@ menu {
 		clr=54
 		bclr=4
 	}
+	align="horiz. centered"
 	format="string"
 	limits {
 	}
