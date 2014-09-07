@@ -425,8 +425,6 @@ asynStatus PSL::getConfig()
             sizeY = bottom - minY;
             setIntegerParam(ADSizeX, sizeX);
             setIntegerParam(ADSizeY, sizeY);
-            imageSize = sizeX * sizeY * sizeof(epicsInt16);
-            setIntegerParam(NDArraySize, imageSize);
         }
     }
     if (validOptions_.count("Fliplr")) {
@@ -519,6 +517,7 @@ asynStatus PSL::getImage()
     NDColorMode_t colorMode;
     epicsTimeStamp now;
     asynStatus status;
+    NDArrayInfo arrayInfo;
     char *pOut=NULL;
     char *pIn;
     const char *functionName = "getImage";
@@ -561,10 +560,12 @@ asynStatus PSL::getImage()
         driverName, functionName, headerLen, 
         (int)dims[0], (int)dims[1], (int)dims[2],
         (int)dataLen);
-    setIntegerParam(NDArraySizeX, itemp1);
-    setIntegerParam(NDArraySizeY, itemp2);
     if ((dims[0] <= 0) || (dims[1] <= 0)) return asynError;
     pImage = this->pNDArrayPool->alloc(nDims, dims, dataType, 0, NULL);
+    pImage->getInfo(&arrayInfo);
+    setIntegerParam(NDArraySizeX, arrayInfo.xSize);
+    setIntegerParam(NDArraySizeY, arrayInfo.ySize);
+    setIntegerParam(NDArraySize, arrayInfo.totalBytes);
     pIn = fromServer_ + headerLen;
     pOut = (char *)pImage->pData;
     nRead_ -= headerLen;
