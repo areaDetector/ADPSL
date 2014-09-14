@@ -332,7 +332,7 @@ asynStatus PSL::getVersion()
 
 asynStatus PSL::getConfig()
 {
-    int minX, minY, sizeX, sizeY, binX, binY, right, bottom, reverseX, reverseY, imageSize;
+    int minX, minY, sizeX, sizeY, binX, binY, right, bottom, reverseX, reverseY;
     int i;
     choice_t::iterator it;
     int fileNumber;
@@ -421,8 +421,8 @@ asynStatus PSL::getConfig()
             sscanf(pStart, "(%d,%d,%d,%d)", &minX, &minY, &right, &bottom);
             setIntegerParam(ADMinX, minX);
             setIntegerParam(ADMinY, minY);
-            sizeX = right - minX;
-            sizeY = bottom - minY;
+            sizeX = right - minX + 1;
+            sizeY = bottom - minY + 1;
             setIntegerParam(ADSizeX, sizeX);
             setIntegerParam(ADSizeY, sizeY);
         }
@@ -762,7 +762,7 @@ asynStatus PSL::writeInt32(asynUser *pasynUser, epicsInt32 value)
  //       sizeX /= (nCameras_/2); sizeY /= (nCameras_/2);
         epicsSnprintf(toServer_, sizeof(toServer_),
                       "SetSubArea;(%d,%d,%d,%d)",
-                      minX, minY, minX+sizeX, minY+sizeY);
+                      minX, minY, minX+sizeX-1, minY+sizeY-1);
         status = writeReadServer(toServer_);
     } else if (function == ADReverseX) {
         epicsSnprintf(toServer_, sizeof(toServer_), "SetFliplr;%d", value);
