@@ -38,6 +38,7 @@ using namespace std;
 #define MAX_MESSAGE_SIZE 4096
 #define MAX_FILENAME_LEN 256
 #define PSL_SERVER_TIMEOUT 2.0
+#define PSL_GET_IMAGE_TIMEOUT 20.0
 #define MAX_CHOICES 64
 
 
@@ -78,6 +79,7 @@ protected:
 private:                                        
     /* These are the methods that are new to this class */
     asynStatus writeReadServer(const char *output, char *input, size_t maxChars, double timeout);
+    asynStatus writeReadServer(const char *output, double timeout);
     asynStatus writeReadServer(const char *output);
     asynStatus openCamera(int cameraId);
     asynStatus getConfig();
@@ -281,6 +283,12 @@ const std::string& PSL::getChoiceFromIndex(choice_t& choices, int index)
 asynStatus PSL::writeReadServer(const char *output)
 {
     return writeReadServer(output, fromServer_, sizeof(fromServer_), PSL_SERVER_TIMEOUT);
+}
+
+
+asynStatus PSL::writeReadServer(const char *output, double timeout)
+{
+    return writeReadServer(output, fromServer_, sizeof(fromServer_), timeout);
 }
 
 
@@ -522,7 +530,7 @@ asynStatus PSL::getImage()
     char *pIn;
     const char *functionName = "getImage";
 
-    writeReadServer("GetImage");
+    writeReadServer("GetImage", PSL_GET_IMAGE_TIMEOUT);
     nDims = 2;
     colorMode = NDColorModeMono;
     if (strncmp(fromServer_, "L;", 2) == 0) {
