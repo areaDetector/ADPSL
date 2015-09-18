@@ -3,6 +3,7 @@
 # May 9, 2012
 
 include "ADBase.template"
+include "NDFile.template"
 
 # These are the records from ADBase.template that we modify some fields for
 # We don't modify any here, but the asynEnum interface in the driver will create
