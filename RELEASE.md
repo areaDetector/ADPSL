@@ -24,7 +24,7 @@ files respectively, in the configure/ directory of the appropriate release of th
 Release Notes
 =============
 
-R2-1
+R2-1 (July 4, 2017)
 ----
 * Many improvements to the driver.  The initial work was done by Adam Bark from Diamond.
   - Worked with Perceval Guillou at Photonic Science to improve the protocol with the server so it is more
@@ -40,7 +40,7 @@ R2-1
   - Improved the report() function.
 * Finished the PSLDoc.html documentation, converting from marCCD document.
 
-R2-0
+R2-0 (March 20, 2014)
 ----
 * Moved the repository to [Github](https://github.com/areaDetector/ADPSL).
 * Re-organized the directory structure to separate the driver library from the example IOC application.
