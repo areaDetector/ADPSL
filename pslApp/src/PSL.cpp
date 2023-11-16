@@ -524,7 +524,6 @@ asynStatus PSL::getImage()
     NDDataType_t dataType=NDUInt8;
     NDArray *pImage=NULL;
     NDColorMode_t colorMode;
-    epicsTimeStamp now;
     asynStatus status;
     NDArrayInfo arrayInfo;
     char *pOut=NULL;
@@ -603,10 +602,9 @@ asynStatus PSL::getImage()
     getIntegerParam(NDArrayCounter, &imageCounter);
 
     /* Put the frame number and time stamp into the NDArray */
-    epicsTimeGetCurrent(&now);
     pImage->uniqueId = imageCounter;
-    pImage->timeStamp = now.secPastEpoch + now.nsec / 1.e9;
     updateTimeStamp(&pImage->epicsTS);
+    pImage->timeStamp = pImage->epicsTS.secPastEpoch + pImage->epicsTS.nsec / 1.e9;
 
     pImage->pAttributeList->add("ColorMode", "Color Mode", NDAttrInt32, &colorMode);
 
